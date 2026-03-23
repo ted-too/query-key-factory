@@ -1,0 +1,20 @@
+{
+  "name": "@repo/query-key-factory",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest --passWithNoTests"
+  },
+  "devDependencies": {
+    "@lukemorales/jest-type-matchers": "^0.2.2",
+    "@types/bun": "latest",
+    "vitest": "^4.0.18"
+  },
+  "peerDependencies": {
+    "@tanstack/query-core": "^5.90.20",
+    "@tanstack/react-query": "^5.90.21"
+  }
+}
