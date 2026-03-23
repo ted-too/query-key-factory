@@ -1,4 +1,4 @@
-export type AnyMutableOrReadonlyArray = any[] | readonly any[];
+export type AnyMutableOrReadonlyArray = unknown[] | readonly unknown[];
 
 export type Tuple = [ValidValue | undefined, ...Array<ValidValue | undefined>];
 
@@ -10,6 +10,6 @@ export type Prettify<T> = {
   [K in keyof T]: T[K];
 } & {};
 
-export type DefinitionKey<Key extends AnyMutableOrReadonlyArray> = {
+export interface DefinitionKey<Key extends AnyMutableOrReadonlyArray> {
   _def: readonly [...Key];
-};
+}
