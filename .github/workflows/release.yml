@@ -1,0 +1,154 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Detect pending changesets
+        id: changesets
+        shell: bash
+        run: |
+          shopt -s nullglob
+          changeset_files=(.changeset/*.md)
+
+          if [ ${#changeset_files[@]} -eq 0 ]; then
+            echo "has_changesets=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "has_changesets=true" >> "$GITHUB_OUTPUT"
+
+      - name: Run checks
+        if: steps.changesets.outputs.has_changesets == 'true'
+        run: bun run check
+
+      - name: Run tests
+        if: steps.changesets.outputs.has_changesets == 'true'
+        run: bun run test
+
+      - name: Build package
+        if: steps.changesets.outputs.has_changesets == 'true'
+        run: bun run build
+
+      - name: Version packages
+        if: steps.changesets.outputs.has_changesets == 'true'
+        run: bun run version-packages
+
+      - name: Derive release metadata
+        if: steps.changesets.outputs.has_changesets == 'true'
+        id: release_meta
+        shell: bash
+        run: |
+          version="$(node -e "console.log(JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version)")"
+          tag="v${version}"
+          channel="latest"
+          prerelease="false"
+
+          case "$version" in
+            *-alpha.*)
+              channel="alpha"
+              prerelease="true"
+              ;;
+            *-beta.*)
+              channel="beta"
+              prerelease="true"
+              ;;
+          esac
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "channel=${channel}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${prerelease}" >> "$GITHUB_OUTPUT"
+
+      - name: Check npm registry
+        if: steps.changesets.outputs.has_changesets == 'true'
+        id: npm_state
+        shell: bash
+        run: |
+          package_name="$(node -e "console.log(JSON.parse(require('fs').readFileSync('package.json', 'utf8')).name)")"
+
+          if npm view "${package_name}@${{ steps.release_meta.outputs.version }}" version >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish stable release
+        if: steps.changesets.outputs.has_changesets == 'true' && steps.npm_state.outputs.already_published == 'false' && steps.release_meta.outputs.channel == 'latest'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
+        run: bunx changeset publish
+
+      - name: Publish prerelease
+        if: steps.changesets.outputs.has_changesets == 'true' && steps.npm_state.outputs.already_published == 'false' && steps.release_meta.outputs.channel != 'latest'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
+        run: bunx changeset publish --tag "${{ steps.release_meta.outputs.channel }}"
+
+      - name: Commit release metadata
+        if: steps.changesets.outputs.has_changesets == 'true'
+        shell: bash
+        run: |
+          git add -A package.json bun.lock .changeset
+
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "chore(release): v${{ steps.release_meta.outputs.version }} [skip ci]"
+          git push origin HEAD:main
+
+      - name: Create git tag
+        if: steps.changesets.outputs.has_changesets == 'true'
+        shell: bash
+        run: |
+          if git ls-remote --tags origin "${{ steps.release_meta.outputs.tag }}" | grep -q "${{ steps.release_meta.outputs.tag }}"; then
+            exit 0
+          fi
+
+          git tag "${{ steps.release_meta.outputs.tag }}"
+          git push origin "${{ steps.release_meta.outputs.tag }}"
+
+      - name: Create GitHub release
+        if: steps.changesets.outputs.has_changesets == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_meta.outputs.tag }}
+          generate_release_notes: true
+          prerelease: ${{ steps.release_meta.outputs.prerelease == 'true' }}

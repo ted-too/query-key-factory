@@ -1,0 +1,8 @@
+{
+  "mode": "pre",
+  "tag": "alpha",
+  "initialVersions": {
+    "@ted-too/query-key-factory": "0.1.0-alpha.0"
+  },
+  "changesets": []
+}

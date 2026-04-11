@@ -33,8 +33,12 @@
     "build:types": "bunx tsc --project tsconfig.build.json",
     "build": "bun run clean && bun run build:js && bun run build:types",
     "test": "vitest --typecheck --passWithNoTests",
-    "check": "ultracite check",
-    "fix": "ultracite fix"
+    "check": "bun run check:types && bun run check:lint",
+    "check:types": "tsc --noEmit",
+    "check:lint": "ultracite check",
+    "fix:lint": "ultracite fix",
+    "changeset": "changeset",
+    "version-packages": "changeset version"
   },
   "publishConfig": {
     "access": "public"
@@ -52,6 +56,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.7",
+    "@changesets/cli": "^2.30.0",
     "@tanstack/query-core": "^5.90.20",
     "@tanstack/react-query": "^5.90.21",
     "@types/bun": "latest",
