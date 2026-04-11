@@ -26,6 +26,6 @@
     "noUnusedParameters": false,
     "noPropertyAccessFromIndexSignature": false,
 
-    "types": ["vitest/globals"]
+    "types": ["vitest/globals", "bun"]
   }
 }
