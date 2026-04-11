@@ -1,6 +1,6 @@
 {
   "name": "@ted-too/query-key-factory",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "description": "Typesafe query key management for TanStack Query with support for nested query factory merges.",
   "author": "Ted Too <tedtoo6@outlook.com>",
   "license": "MIT",
