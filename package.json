@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ted-too/query-key-factory.git"
+    "url": "https://github.com/ted-too/query-key-factory.git"
   },
   "bugs": {
     "url": "https://github.com/ted-too/query-key-factory/issues"
