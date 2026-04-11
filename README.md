@@ -106,6 +106,39 @@ Use `._def` when you want to refer to a branch.
 
 Use `.queryKey` when you want one exact query instance.
 
+The property name is always part of the computed key path.
+
+`queryKey` adds extra suffix segments after that path.
+
+For example:
+
+```ts
+const session = createQueryKeys("session", {
+  me: {
+    queryFn: ({ signal }) => fetchSession({ signal }),
+  },
+  detail: (sessionId: number) => ({
+    queryKey: [sessionId, { include: "user" }],
+    queryFn: ({ signal }) =>
+      fetchSessionDetail(sessionId, { include: "user", signal }),
+  }),
+});
+```
+
+```ts
+session.me.queryKey;
+// ["session", "me"]
+
+session.detail(1).queryKey;
+// ["session", "detail", 1, { include: "user" }]
+```
+
+For static object entries, `queryKey` is optional.
+
+Omitting it is the same as saying "use only the computed path for this entry".
+
+Query key suffix segments can be strings, numbers, booleans, objects, or other serializable values supported by TanStack Query.
+
 ## Using it with TanStack Query
 
 ```ts

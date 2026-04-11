@@ -13,7 +13,7 @@ import type {
 
 interface RuntimeFactoryObject {
   queryFn?: QueryFunction;
-  queryKey: AnyMutableOrReadonlyArray | null;
+  queryKey?: AnyMutableOrReadonlyArray | null;
   [key: string]: unknown;
 }
 
