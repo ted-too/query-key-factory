@@ -106,19 +106,12 @@ jobs:
             echo "already_published=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish stable release
-        if: steps.changesets.outputs.has_changesets == 'true' && steps.npm_state.outputs.already_published == 'false' && steps.release_meta.outputs.channel == 'latest'
+      - name: Publish release
+        if: steps.changesets.outputs.has_changesets == 'true' && steps.npm_state.outputs.already_published == 'false'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
         run: bunx changeset publish
-
-      - name: Publish prerelease
-        if: steps.changesets.outputs.has_changesets == 'true' && steps.npm_state.outputs.already_published == 'false' && steps.release_meta.outputs.channel != 'latest'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: true
-        run: bunx changeset publish --tag "${{ steps.release_meta.outputs.channel }}"
 
       - name: Commit release metadata
         if: steps.changesets.outputs.has_changesets == 'true'
