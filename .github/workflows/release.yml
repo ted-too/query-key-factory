@@ -31,7 +31,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.14.0
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
@@ -109,7 +109,6 @@ jobs:
       - name: Publish release
         if: steps.changesets.outputs.has_changesets == 'true' && steps.npm_state.outputs.already_published == 'false'
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: true
         run: bunx changeset publish
 
