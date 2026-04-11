@@ -17,6 +17,9 @@ interface Filters {
 test("createQueryKeys infers the generated store unit", () => {
   const users = createQueryKeys("users", {
     me: null,
+    session: {
+      queryFn: () => Promise.resolve({ active: true }),
+    },
     detail: (userId: string) => ({
       queryKey: [userId],
       queryFn: () => Promise.resolve({ id: userId }),
@@ -26,6 +29,9 @@ test("createQueryKeys infers the generated store unit", () => {
 
   expectTypeOf(users._def).toEqualTypeOf<readonly ["users"]>();
   expectTypeOf(users.me.queryKey).toEqualTypeOf<readonly ["users", "me"]>();
+  expectTypeOf(users.session.queryKey).toEqualTypeOf<
+    readonly ["users", "session"]
+  >();
   expectTypeOf(users.detail._def).toEqualTypeOf<readonly ["users", "detail"]>();
   expectTypeOf(users.detail).parameter(0).toEqualTypeOf<string>();
   expectTypeOf(users.detail("user_1").queryKey).toExtend<readonly unknown[]>();
@@ -38,6 +44,34 @@ test("createQueryKeys infers the generated store unit", () => {
   expectTypeOf<
     ResolveQueryStoreUnit<typeof users>["detail"]
   >().toExtend<object>();
+});
+
+test("query keys support non-string serializable values", () => {
+  const products = createQueryKeys("products", {
+    filtered: (
+      page: number,
+      preview: boolean,
+      filters: { status: "active" | "archived" }
+    ) => ({
+      queryKey: tupleKey(page, preview, filters),
+      queryFn: () => Promise.resolve([] as const),
+    }),
+  });
+
+  expectTypeOf(products.filtered._def).toEqualTypeOf<
+    readonly ["products", "filtered"]
+  >();
+  expectTypeOf(
+    products.filtered(1, true, { status: "active" }).queryKey
+  ).toEqualTypeOf<
+    readonly [
+      "products",
+      "filtered",
+      number,
+      boolean,
+      { status: "active" | "archived" },
+    ]
+  >();
 });
 
 test("createQueryKeyStore infers the query store shape", () => {

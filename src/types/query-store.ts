@@ -12,7 +12,7 @@ type ReservedFactoryKey = "queryKey" | "queryFn";
 
 interface StaticFactoryObjectSchema {
   queryFn?: QueryFunction;
-  queryKey: AnyMutableOrReadonlyArray | null;
+  queryKey?: AnyMutableOrReadonlyArray | null;
   [key: string]: unknown;
 }
 
@@ -62,7 +62,7 @@ type InvalidSchema<Schema extends QueryFactorySchema> = Omit<
 >;
 
 type StrictFactoryObject<
-  T extends { queryKey: AnyMutableOrReadonlyArray | null },
+  T extends { queryKey?: AnyMutableOrReadonlyArray | null },
 > = {
   [K in keyof T]: K extends ReservedFactoryKey
     ? T[K]
@@ -70,14 +70,14 @@ type StrictFactoryObject<
       ? (...args: Args) => StrictOptions<Result>
       : T[K] extends null | AnyMutableOrReadonlyArray
         ? T[K]
-        : T[K] extends { queryKey: AnyMutableOrReadonlyArray | null }
+        : T[K] extends { queryKey?: AnyMutableOrReadonlyArray | null }
           ? StrictFactoryObject<T[K]>
           : never;
 };
 
 export type StrictOptions<T> = T extends AnyMutableOrReadonlyArray
   ? T
-  : T extends { queryKey: AnyMutableOrReadonlyArray | null }
+  : T extends { queryKey?: AnyMutableOrReadonlyArray | null }
     ? StrictFactoryObject<T>
     : T extends null
       ? T
@@ -118,7 +118,7 @@ export interface QueryOptionsStruct<
 
 type DefinitionForFactory<
   BaseKey extends AnyMutableOrReadonlyArray,
-  SchemaQueryKey extends AnyMutableOrReadonlyArray | null,
+  SchemaQueryKey extends AnyMutableOrReadonlyArray | null | undefined,
 > = SchemaQueryKey extends null ? object : DefinitionKey<BaseKey>;
 
 type NestedFactoryOutputs<
@@ -136,7 +136,7 @@ type NestedFactoryOutputs<
 type FactoryRecordOutput<
   BaseKey extends AnyMutableOrReadonlyArray,
   Schema extends {
-    queryKey: AnyMutableOrReadonlyArray | null;
+    queryKey?: AnyMutableOrReadonlyArray | null;
     queryFn?: QueryFunction;
   },
   SchemaQueryKey extends Schema["queryKey"] = Schema["queryKey"],

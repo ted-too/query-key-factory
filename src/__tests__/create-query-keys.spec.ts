@@ -79,6 +79,33 @@ describe("createQueryKeys", () => {
       });
     });
 
+    it("allows static query objects to omit queryKey", () => {
+      const sut = createQueryKeys("session", {
+        me: {
+          queryFn: () => Promise.resolve({ userId: "user_1" }),
+        },
+      });
+
+      expect(sut.me).toEqual({
+        queryKey: ["session", "me"],
+        queryFn: expect.any(Function),
+      });
+    });
+
+    it("supports non-string query key segments", () => {
+      const sut = createQueryKeys("products", {
+        filtered: (page: number, preview: boolean) => ({
+          queryKey: [page, { preview }],
+          queryFn: () => Promise.resolve([]),
+        }),
+      });
+
+      expect(sut.filtered(2, true)).toEqual({
+        queryKey: ["products", "filtered", 2, { preview: true }],
+        queryFn: expect.any(Function),
+      });
+    });
+
     it("creates callbacks for dynamic keys", () => {
       const sut = createQueryKeys("test", {
         prop: (value: string) => [value],
