@@ -193,9 +193,9 @@ test("nested child queryFns keep the same context typing", () => {
 
   const session = sessions.get("session_1");
   expectTypeOf(session.queryFn).parameter(0).not.toBeAny();
-  expectTypeOf(session.queryFn).parameter(0).toEqualTypeOf<
-    Parameters<typeof session.listMessages.queryFn>[0]
-  >();
+  expectTypeOf(session.queryFn)
+    .parameter(0)
+    .toEqualTypeOf<Parameters<typeof session.listMessages.queryFn>[0]>();
 });
 
 test("tupleKey preserves exact deep nested query tuples", () => {

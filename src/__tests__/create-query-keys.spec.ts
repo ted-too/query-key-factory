@@ -127,7 +127,9 @@ describe("createQueryKeys", () => {
         }),
       });
       const unsafeSut = sut as unknown as {
-        prop: (value: string) => { queryKey: readonly ["test", "prop", string] };
+        prop: (value: string) => {
+          queryKey: readonly ["test", "prop", string];
+        };
       };
 
       expect(unsafeSut.prop("value")).toEqual({
