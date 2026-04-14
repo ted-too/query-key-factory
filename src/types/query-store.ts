@@ -13,13 +13,25 @@ type ReservedFactoryKey = "queryKey" | "queryFn";
 interface StaticFactoryObjectSchema {
   queryFn?: QueryFunction;
   queryKey?: AnyMutableOrReadonlyArray | null;
-  [key: string]: unknown;
+  [key: string]:
+    | AnyMutableOrReadonlyArray
+    | DynamicKey
+    | QueryFunction
+    | StaticFactoryObjectSchema
+    | null
+    | undefined;
 }
 
 interface DynamicFactoryObjectSchema {
   queryFn?: QueryFunction;
   queryKey: AnyMutableOrReadonlyArray;
-  [key: string]: unknown;
+  [key: string]:
+    | AnyMutableOrReadonlyArray
+    | DynamicKey
+    | QueryFunction
+    | StaticFactoryObjectSchema
+    | null
+    | undefined;
 }
 
 type FactoryProperty =

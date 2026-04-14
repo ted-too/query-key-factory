@@ -172,6 +172,32 @@ test("nested child queries keep inferred store output", () => {
   >().toExtend<object>();
 });
 
+test("nested child queryFns keep the same context typing", () => {
+  const sessions = createQueryKeys("sessions", {
+    get: (sessionId: string) => ({
+      queryKey: [sessionId],
+      queryFn: (ctx) => {
+        expectTypeOf(ctx.signal).toExtend<AbortSignal | undefined>();
+        return Promise.resolve({ id: sessionId, key: ctx.queryKey });
+      },
+      listMessages: {
+        queryKey: [sessionId, "messages"],
+        queryFn: (ctx) => {
+          expectTypeOf(ctx).not.toBeAny();
+          expectTypeOf(ctx.signal).toExtend<AbortSignal | undefined>();
+          return Promise.resolve({ sessionId, key: ctx.queryKey });
+        },
+      },
+    }),
+  });
+
+  const session = sessions.get("session_1");
+  expectTypeOf(session.queryFn).parameter(0).not.toBeAny();
+  expectTypeOf(session.queryFn)
+    .parameter(0)
+    .toEqualTypeOf<Parameters<typeof session.listMessages.queryFn>[0]>();
+});
+
 test("tupleKey preserves exact deep nested query tuples", () => {
   const products = createQueryKeys("products", {
     detail: (sku: string) => ({

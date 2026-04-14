@@ -126,8 +126,13 @@ describe("createQueryKeys", () => {
           staleTime: Number.POSITIVE_INFINITY,
         }),
       });
+      const unsafeSut = sut as unknown as {
+        prop: (value: string) => {
+          queryKey: readonly ["test", "prop", string];
+        };
+      };
 
-      expect(sut.prop("value")).toEqual({
+      expect(unsafeSut.prop("value")).toEqual({
         queryKey: ["test", "prop", "value"],
       });
     });
