@@ -1,8 +1,6 @@
 # Query Key Factory
 
-Typesafe query key management for TanStack Query, with support for composing feature stores into larger domain stores.
-
-This package started as a fork inspired by [`@lukemorales/query-key-factory`](https://github.com/lukemorales/query-key-factory). It keeps the original library's core ergonomics while extending the merge story so you can group and re-group query factories into nested domains.
+Typesafe TanStack Query factories built around a small DSL.
 
 ## Install
 
@@ -10,91 +8,142 @@ This package started as a fork inspired by [`@lukemorales/query-key-factory`](ht
 npm install @ted-too/query-key-factory
 ```
 
-This package is designed for TanStack Query v5 and above.
+This package targets TanStack Query v5+.
 
-## What this library gives you
-
-- One place to define query keys and query functions
-- Fully typed query keys
-- Reusable `_def` scopes for invalidation and grouping
-- Feature-level query factories that can be merged into larger domain stores
-- Inline nested child queries when a query only makes sense in the context of another query
-
-## Core ideas
-
-### `QueryStoreUnit`
-
-A `QueryStoreUnit` is one feature's query factory.
-
-Example:
+## Quick Start
 
 ```ts
-const products = createQueryKeys("products", {
-  detail: (sku: string) => ({
-    queryKey: [sku],
-    queryFn: ({ signal }) => fetchProductBySku(sku, { signal }),
+import * as q from "@ted-too/query-key-factory/query";
+```
+
+Use `import * as q` if tree-shaking matters.
+
+`q` is also available as a named export:
+
+```ts
+import { q } from "@ted-too/query-key-factory/query";
+```
+
+That form is supported for convenience, but it goes through the exported `q` object.
+Some bundlers may still optimize it, but you should not rely on `import { q }` for tree-shaking.
+If tree-shaking matters, prefer `import * as q` instead of `import { q }`.
+
+```ts
+import * as q from "@ted-too/query-key-factory/query";
+
+export const session = q.createQueryKeys("session", {
+  me: q.static({
+    queryFn: async ({ signal }) => {
+      const client = createClient();
+      const { data, error } = await client.getSession({
+        fetchOptions: { signal },
+      });
+
+      if (error) {
+        return Promise.reject(error);
+      }
+
+      return data;
+    },
+    staleTime: 60_000,
+    organizationBySlug: q.dynamic((organizationSlug: string) =>
+      q.static({
+        queryKey: ["organization", organizationSlug],
+        queryFn: async ({ signal }) => {
+          const client = createClient();
+          const { data, error } =
+            await client.organization.getFullOrganization({
+              query: { organizationSlug },
+              fetchOptions: { signal },
+            });
+
+          if (error) {
+            return Promise.reject(error);
+          }
+
+          return data;
+        },
+        membership: q.static({
+          queryKey: null,
+          queryFn: async ({ signal }) => {
+            const client = createClient();
+            const { data, error } =
+              await client.organization.getActiveMember({
+                query: { organizationSlug },
+                fetchOptions: { signal },
+              });
+
+            if (error) {
+              return Promise.reject(error);
+            }
+
+            return data;
+          },
+        }),
+      })
+    ),
   }),
 });
 ```
 
-`products` is a `QueryStoreUnit`.
-
-### `QueryStore`
-
-A `QueryStore` is an object made of multiple `QueryStoreUnit`s.
-
-Example:
+Use it directly with TanStack Query:
 
 ```ts
-const storeQueries = createQueryKeyStore({
-  products: {
-    detail: (sku: string) => [sku],
-  },
-});
+useQuery(session.me);
+useQuery(session.me.organizationBySlug("acme"));
+useQuery(session.me.organizationBySlug("acme").membership);
 ```
 
-`storeQueries` is a `QueryStore`.
+## The DSL
 
-In practice:
+### `q.static(...)`
 
-- `createQueryKeys()` creates a `QueryStoreUnit`
-- `createQueryKeyStore()` creates a `QueryStore`
-- `mergeQueryKeys()` composes `QueryStoreUnit`s into a `QueryStore`, or creates a namespaced `QueryStoreUnit` that can be merged again later
+Defines a query node that does not need arguments.
 
-## A single example
+The object can contain:
 
-The rest of this guide uses one small catalog example:
-
-```ts
-import {
-  createQueryKeyStore,
-  createQueryKeys,
-  mergeQueryKeys,
-  tupleKey,
-} from "@ted-too/query-key-factory";
-```
+- TanStack query options such as `queryFn`, `staleTime`, `gcTime`, `meta`, `select`, `enabled`, and `refetchOnWindowFocus`
+- `queryKey`, which appends extra segments after the computed path
+- Nested child nodes created with `q.static(...)` or `q.dynamic(...)`
 
 ```ts
-export const products = createQueryKeys("products", {
-  detail: (sku: string) => ({
-    queryKey: tupleKey(sku),
-    queryFn: ({ signal }) => fetchProductBySku(sku, { signal }),
+const account = q.createQueryKeys("account", {
+  profile: q.static({
+    queryFn: ({ signal }) => fetchProfile({ signal }),
+    staleTime: 30_000,
   }),
 });
 ```
 
-## Reading the generated API
-
-### `._def` vs `.queryKey`
-
-`._def` is the stable scope for a factory node.
-
-`.queryKey` is the full cache key for a concrete query.
+If you want to use only the computed path for a node, use `queryKey: null`.
 
 ```ts
-products._def;
-// ["products"]
+const account = q.createQueryKeys("account", {
+  profile: q.static({
+    queryKey: null,
+    queryFn: ({ signal }) => fetchProfile({ signal }),
+  }),
+});
+```
 
+### `q.dynamic(...)`
+
+Defines a query node that takes arguments and returns a `q.static(...)` node.
+
+```ts
+const products = q.createQueryKeys("products", {
+  detail: q.dynamic((sku: string) =>
+    q.static({
+      queryKey: [sku],
+      queryFn: ({ signal }) => fetchProductBySku(sku, { signal }),
+    })
+  ),
+});
+```
+
+This gives you:
+
+```ts
 products.detail._def;
 // ["products", "detail"]
 
@@ -102,68 +151,50 @@ products.detail("sku_123").queryKey;
 // ["products", "detail", "sku_123"]
 ```
 
-Use `._def` when you want to refer to a branch.
+## Reading The Output
 
-Use `.queryKey` when you want one exact query instance.
+Every generated branch gives you a stable scope and a concrete query key:
 
-The property name is always part of the computed key path.
-
-`queryKey` adds extra suffix segments after that path.
-
-For example:
+- `._def` is the branch scope
+- `.queryKey` is the fully resolved key for that node
 
 ```ts
-const session = createQueryKeys("session", {
-  me: {
-    queryFn: ({ signal }) => fetchSession({ signal }),
-  },
-  detail: (sessionId: number) => ({
-    queryKey: [sessionId, { include: "user" }],
-    queryFn: ({ signal }) =>
-      fetchSessionDetail(sessionId, { include: "user", signal }),
-  }),
-});
-```
+session._def;
+// ["session"]
 
-```ts
 session.me.queryKey;
 // ["session", "me"]
 
-session.detail(1).queryKey;
-// ["session", "detail", 1, { include: "user" }]
+session.me.organizationBySlug._def;
+// ["session", "me", "organizationBySlug"]
+
+session.me.organizationBySlug("acme").queryKey;
+// ["session", "me", "organizationBySlug", "organization", "acme"]
 ```
 
-For static object entries, `queryKey` is optional.
+The property path is always included automatically.
 
-Omitting it is the same as saying "use only the computed path for this entry".
+If you add `queryKey`, those values are appended after the path.
 
-Query key suffix segments can be strings, numbers, booleans, objects, or other serializable values supported by TanStack Query.
+## Nested Queries
 
-## Using it with TanStack Query
-
-```ts
-import { useQuery } from "@tanstack/react-query";
-
-export function useProductDetail(sku: string) {
-  return useQuery(products.detail(sku));
-}
-```
-
-## Inline nested child queries
-
-Child queries are declared directly on the factory result object.
+Nested queries live directly beside the query options for that node.
 
 ```ts
-const products = createQueryKeys("products", {
-  detail: (sku: string) => ({
-    queryKey: [sku],
-    queryFn: ({ signal }) => fetchProductBySku(sku, { signal }),
-    recommended: (region: string) => ({
-      queryKey: [region],
-      queryFn: ({ signal }) =>
-        fetchRecommendedProducts(sku, region, { signal }),
-    }),
-  }),
+const products = q.createQueryKeys("products", {
+  detail: q.dynamic((sku: string) =>
+    q.static({
+      queryKey: [sku],
+      queryFn: ({ signal }) => fetchProductBySku(sku, { signal }),
+      recommended: q.dynamic((region: string) =>
+        q.static({
+          queryKey: [region],
+          queryFn: ({ signal }) =>
+            fetchRecommendedProducts(sku, region, { signal }),
+        })
+      ),
+    })
+  ),
 });
 ```
 
@@ -173,108 +204,83 @@ That gives you:
 products.detail("sku_123").recommended("us").queryKey;
 ```
 
-This is useful when a child query only makes sense in the context of its parent.
+## Tuple Inference
 
-## Merging feature units
-
-The preferred approach is to define features independently and merge them later.
+Use `q.tupleKey(...)` when you want exact tuple inference through deeper nesting.
 
 ```ts
-export const collections = createQueryKeys("collections", {
-  bySlug: (slug: string) => ({
-    queryKey: tupleKey(slug),
-    queryFn: ({ signal }) => fetchCollectionBySlug(slug, { signal }),
-  }),
+const products = q.createQueryKeys("products", {
+  detail: q.dynamic((sku: string) =>
+    q.static({
+      queryKey: q.tupleKey(sku),
+      recommended: q.dynamic((region: string) =>
+        q.static({
+          queryKey: q.tupleKey(region),
+        })
+      ),
+    })
+  ),
 });
-
-export const catalog = mergeQueryKeys(products, collections);
 ```
 
-This creates a `QueryStore`:
+## Building A Store
+
+Use `q.createQueryKeyStore(...)` when you want multiple top-level features in one declaration.
 
 ```ts
-catalog.products.detail("sku_123").queryKey;
-catalog.collections.bySlug("summer-sale").queryKey;
-```
-
-## Building a store in one file
-
-If you do not want to split features into separate files and merge them, use `createQueryKeyStore()` instead:
-
-```ts
-export const storeQueries = createQueryKeyStore({
+export const queries = q.createQueryKeyStore({
   products: {
-    detail: (sku: string) => ({
-      queryKey: tupleKey(sku),
-      queryFn: ({ signal }) => fetchProductBySku(sku, { signal }),
-    }),
+    detail: q.dynamic((sku: string) =>
+      q.static({
+        queryKey: [sku],
+        queryFn: ({ signal }) => fetchProductBySku(sku, { signal }),
+      })
+    ),
   },
   collections: {
-    bySlug: (slug: string) => ({
-      queryKey: tupleKey(slug),
-      queryFn: ({ signal }) => fetchCollectionBySlug(slug, { signal }),
-    }),
+    bySlug: q.dynamic((slug: string) =>
+      q.static({
+        queryKey: [slug],
+        queryFn: ({ signal }) => fetchCollectionBySlug(slug, { signal }),
+      })
+    ),
   },
 });
 ```
 
-This also creates a `QueryStore`:
+## Merging Features
+
+Use `q.mergeQueryKeys(...)` to compose separately declared features.
 
 ```ts
-storeQueries.products.detail("sku_123").queryKey;
-storeQueries.collections.bySlug("summer-sale").queryKey;
-```
-
-## Namespaced merges
-
-You can also create a named group:
-
-```ts
-export const catalog = mergeQueryKeys("catalog", products, collections);
-```
-
-This creates a namespaced `QueryStoreUnit`, so it can be merged again later.
-
-```ts
-catalog._def;
-// ["catalog"]
-
-catalog.products.detail("sku_123").queryKey;
-```
-
-Then later:
-
-```ts
-export const mergedQueries = mergeQueryKeys(account, catalog);
-```
-
-Now:
-
-```ts
-mergedQueries.account.profile.queryKey;
-mergedQueries.catalog.products.detail("sku_123").queryKey;
-```
-
-## `tupleKey(...)`
-
-You can always write `queryKey: [value]`.
-
-If you want deeper nested tuple inference to stay exact, use `tupleKey(...)`:
-
-```ts
-const products = createQueryKeys("products", {
-  detail: (sku: string) => ({
-    queryKey: tupleKey(sku),
-    recommended: (region: string) => ({
-      queryKey: tupleKey(region),
-    }),
-  }),
+const products = q.createQueryKeys("products", {
+  detail: q.dynamic((sku: string) =>
+    q.static({
+      queryKey: [sku],
+      queryFn: ({ signal }) => fetchProductBySku(sku, { signal }),
+    })
+  ),
 });
+
+const collections = q.createQueryKeys("collections", {
+  bySlug: q.dynamic((slug: string) =>
+    q.static({
+      queryKey: [slug],
+      queryFn: ({ signal }) => fetchCollectionBySlug(slug, { signal }),
+    })
+  ),
+});
+
+const catalog = q.mergeQueryKeys(products, collections);
 ```
 
-This is especially useful when you want precise inferred types several levels deep.
+You can also create a namespaced unit that can be merged again later:
 
-## Types
+```ts
+const catalog = q.mergeQueryKeys("catalog", products, collections);
+```
+
+## Type Helpers
 
 ```ts
 import type {
@@ -282,69 +288,61 @@ import type {
   QueryStoreUnit,
   ResolveQueryData,
   TypedUseQueryOptions,
-} from "@ted-too/query-key-factory";
+} from "@ted-too/query-key-factory/query";
 ```
 
-Using the example declarations above:
+Examples:
 
 ```ts
-type ProductsUnit = typeof products; // QueryStoreUnit
-type MergedQueries = typeof mergedQueries; // QueryStore
-type StoreQueries = typeof storeQueries; // QueryStore
-
-// From a merged QueryStore
-// You could also do: ResolveQueryData<typeof products.detail>
-type ProductDetailData = ResolveQueryData<typeof mergedQueries.products.detail>;
-
-// From a nested child query on a merged QueryStore
-// You could also do: ResolveQueryData<ReturnType<typeof products.detail>["recommended"]>
-type RecommendedData = ResolveQueryData<
-  ReturnType<typeof mergedQueries.products.detail>["recommended"]
+type SessionUnit = typeof session;
+type SessionData = ResolveQueryData<typeof session.me>;
+type OrganizationData = ResolveQueryData<
+  ReturnType<typeof session.me.organizationBySlug>
 >;
-
-type ProductDetailOptions = TypedUseQueryOptions<
-  typeof mergedQueries.products.detail
->;
-type RecommendedOptions = TypedUseQueryOptions<
-  ReturnType<typeof mergedQueries.products.detail>["recommended"]
+type MembershipOptions = TypedUseQueryOptions<
+  ReturnType<typeof session.me.organizationBySlug>["membership"]
 >;
 ```
 
-What these helpers are for:
-
-- `ResolveQueryData<typeof mergedQueries.products.detail>` gives you the resolved data type from that query unit's `queryFn`
-- `ResolveQueryData<ReturnType<typeof mergedQueries.products.detail>["recommended"]>` gives you the resolved data type for a nested child query unit
-- `TypedUseQueryOptions<typeof mergedQueries.products.detail>` gives you correctly typed TanStack Query options for that unit
-
-## Current scope
-
-This package is currently focused on query key factories.
-
-Mutation key support has been intentionally removed for now while it is redesigned, and will come back in a future release.
+`ResolveQueryData` works best with concrete nodes. For dynamic nodes, pass `ReturnType<typeof yourFactory>`.
 
 ## API
 
-### `createQueryKeys(key, schema)`
+### `q.createQueryKeys(key, schema)`
 
-Creates a `QueryStoreUnit` for one feature.
+Creates one feature-level query factory.
 
-### `createQueryKeyStore(schema)`
+### `q.createQueryKeyStore(schema)`
 
-Creates a `QueryStore` from an object of feature schemas declared in one place.
+Creates a store with multiple top-level features.
 
-### `mergeQueryKeys(...schemas)`
+### `q.mergeQueryKeys(...schemas)`
 
-Merges `QueryStoreUnit`s into a `QueryStore`.
+Merges multiple feature factories into one store.
 
-### `mergeQueryKeys(namespace, ...schemas)`
+### `q.mergeQueryKeys(namespace, ...schemas)`
 
-Creates a named `QueryStoreUnit` with its own `_def`, which can be merged again later.
+Creates a namespaced feature factory that can be merged later.
 
-### `tupleKey(...values)`
+### `q.static(definition)`
 
-Builds a tuple-typed query key segment list when you want deeper nested key inference to stay exact.
+Creates a static query node.
+
+### `q.dynamic(factory)`
+
+Creates a parameterized query node.
+
+### `q.tupleKey(...values)`
+
+Builds a tuple-typed query key suffix.
+
+## Current Scope
+
+This package is focused on query factories.
+
+The `q` namespace is meant to leave room for future namespaces such as mutations without changing the overall mental model.
 
 ## Credits
 
 - Original package and concept: [`@lukemorales/query-key-factory`](https://github.com/lukemorales/query-key-factory)
-- This package is a fork/adaptation built for additional composition needs, and its source will live at [github.com/ted-too/query-key-factory](https://github.com/ted-too/query-key-factory)
+- This fork lives at [github.com/ted-too/query-key-factory](https://github.com/ted-too/query-key-factory)

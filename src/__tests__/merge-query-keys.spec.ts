@@ -1,5 +1,4 @@
-import { createQueryKeys } from "../lib/create-query-keys";
-import { mergeQueryKeys } from "../lib/merge-query-keys";
+import { q } from "../lib/q";
 
 describe("mergeQueryKeys", () => {
   interface Filters {
@@ -8,19 +7,33 @@ describe("mergeQueryKeys", () => {
   }
 
   const performSetup = () => {
-    const usersKeys = createQueryKeys("users", {
-      me: null,
-      detail: (userId: string) => ({
-        queryKey: [userId],
-        queryFn: () => Promise.resolve({ id: userId }),
-        settings: null,
-      }),
+    const usersKeys = q.createQueryKeys("users", {
+      me: q.static({}),
+      detail: q.dynamic((userId: string) =>
+        q.static({
+          queryKey: [userId],
+          queryFn: () => Promise.resolve({ id: userId }),
+          settings: q.static({}),
+        })
+      ),
     });
 
-    const todosKeys = createQueryKeys("todos", {
-      detail: (todoId: string) => [todoId],
-      list: (filters: Filters) => [{ filters }],
-      search: (query: string, limit: number) => [query, limit],
+    const todosKeys = q.createQueryKeys("todos", {
+      detail: q.dynamic((todoId: string) =>
+        q.static({
+          queryKey: [todoId],
+        })
+      ),
+      list: q.dynamic((filters: Filters) =>
+        q.static({
+          queryKey: [{ filters }],
+        })
+      ),
+      search: q.dynamic((query: string, limit: number) =>
+        q.static({
+          queryKey: [query, limit],
+        })
+      ),
     });
 
     return { usersKeys, todosKeys };
@@ -29,7 +42,7 @@ describe("mergeQueryKeys", () => {
   it("creates a named merge with _def when a string key is provided", () => {
     const { usersKeys, todosKeys } = performSetup();
 
-    const named = mergeQueryKeys("myDomain", usersKeys, todosKeys);
+    const named = q.mergeQueryKeys("myDomain", usersKeys, todosKeys);
 
     expect(named).toHaveProperty("_def", ["myDomain"]);
     expect(named).toHaveProperty("users");
@@ -47,8 +60,8 @@ describe("mergeQueryKeys", () => {
   it("allows named merges to be nested inside another merge", () => {
     const { usersKeys, todosKeys } = performSetup();
 
-    const nested = mergeQueryKeys("nested", todosKeys);
-    const store = mergeQueryKeys(usersKeys, nested);
+    const nested = q.mergeQueryKeys("nested", todosKeys);
+    const store = q.mergeQueryKeys(usersKeys, nested);
 
     expect(store).toHaveProperty("users");
     expect(store).toHaveProperty("nested");
@@ -64,14 +77,22 @@ describe("mergeQueryKeys", () => {
   });
 
   it("merges store units that share the same top-level key", () => {
-    const todosBase = createQueryKeys("todos", {
-      detail: (todoId: string) => [todoId],
+    const todosBase = q.createQueryKeys("todos", {
+      detail: q.dynamic((todoId: string) =>
+        q.static({
+          queryKey: [todoId],
+        })
+      ),
     });
-    const todosSearch = createQueryKeys("todos", {
-      search: (query: string, limit: number) => [query, limit],
+    const todosSearch = q.createQueryKeys("todos", {
+      search: q.dynamic((query: string, limit: number) =>
+        q.static({
+          queryKey: [query, limit],
+        })
+      ),
     });
 
-    const store = mergeQueryKeys(todosBase, todosSearch);
+    const store = q.mergeQueryKeys(todosBase, todosSearch);
 
     expect(store).toEqual({
       todos: {
@@ -87,7 +108,7 @@ describe("mergeQueryKeys", () => {
   it('merges the keys into a single store object using the "_def" values as the properties', () => {
     const { usersKeys, todosKeys } = performSetup();
 
-    const store = mergeQueryKeys(usersKeys, todosKeys);
+    const store = q.mergeQueryKeys(usersKeys, todosKeys);
 
     expect(store).toHaveProperty("users");
     expect(store).toHaveProperty("todos");
