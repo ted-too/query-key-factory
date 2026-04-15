@@ -9,7 +9,7 @@ export function createQueryKeyStore<const StoreSchema extends QueryStoreSchema>(
   schema: StoreSchema & QueryStoreSchema
 ): QueryStoreFromSchema<StoreSchema> {
   const queryStores = Object.entries(schema).map(([key, factory]) =>
-    factory ? createQueryKeys(key, factory) : createQueryKeys(key)
+    createQueryKeys(key, factory)
   );
 
   return mergeQueryKeys(...queryStores) as QueryStoreFromSchema<StoreSchema>;

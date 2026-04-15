@@ -49,13 +49,18 @@ interface LooseQueryOptionsStruct {
   queryKey: AnyMutableOrReadonlyArray;
 }
 
-export type ResolveQueryData<QueryUnit> =
-  QueryUnit extends AnyDynamicQueryStoreUnit
-    ? ResolveQueryData<ReturnType<QueryUnit>>
-    : QueryUnit extends {
-          queryFn: (...args: infer _Args) => infer Result;
-        }
+export type ResolveQueryData<QueryUnit> = QueryUnit extends {
+  queryFn: (...args: infer _Args) => infer Result;
+}
+  ? Awaited<Result>
+  : QueryUnit extends (...args: readonly unknown[]) => infer ReturnedQueryUnit
+    ? ReturnedQueryUnit extends {
+        queryFn: (...args: infer _Args) => infer Result;
+      }
       ? Awaited<Result>
+      : ResolveQueryData<ReturnedQueryUnit>
+    : QueryUnit extends (...args: readonly unknown[]) => infer Result
+      ? ResolveQueryData<Result>
       : never;
 
 type LooseQueryOptionsStructGenerator = (

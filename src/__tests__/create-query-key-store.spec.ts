@@ -1,4 +1,4 @@
-import { createQueryKeyStore } from "../lib/create-query-key-store";
+import { q } from "../lib/q";
 
 describe("createQueryKeyStore", () => {
   it("creates a store from the schema provided as argument", () => {
@@ -7,19 +7,33 @@ describe("createQueryKeyStore", () => {
       status: "completed" | "in-progress";
     }
 
-    const store = createQueryKeyStore({
+    const store = q.createQueryKeyStore({
       users: {
-        me: null,
-        detail: (userId: string) => ({
-          queryKey: [userId],
-          queryFn: () => Promise.resolve({ id: userId }),
-          settings: null,
-        }),
+        me: q.static({}),
+        detail: q.dynamic((userId: string) =>
+          q.static({
+            queryKey: [userId],
+            queryFn: () => Promise.resolve({ id: userId }),
+            settings: q.static({}),
+          })
+        ),
       },
       todos: {
-        detail: (todoId: string) => [todoId],
-        list: (filters: Filters) => [{ filters }],
-        search: (query: string, limit: number) => [query, limit],
+        detail: q.dynamic((todoId: string) =>
+          q.static({
+            queryKey: [todoId],
+          })
+        ),
+        list: q.dynamic((filters: Filters) =>
+          q.static({
+            queryKey: [{ filters }],
+          })
+        ),
+        search: q.dynamic((query: string, limit: number) =>
+          q.static({
+            queryKey: [query, limit],
+          })
+        ),
       },
     });
 
