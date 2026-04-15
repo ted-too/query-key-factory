@@ -4,5 +4,10 @@
   "initialVersions": {
     "@ted-too/query-key-factory": "0.1.0-alpha.0"
   },
-  "changesets": ["bright-stamps-call", "tender-feet-sleep", "tiny-yaks-drive"]
+  "changesets": [
+    "bright-stamps-call",
+    "real-buses-buy",
+    "tender-feet-sleep",
+    "tiny-yaks-drive"
+  ]
 }
