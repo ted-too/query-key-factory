@@ -9,31 +9,23 @@ describe("createQueryKeyStore", () => {
 
     const store = q.createQueryKeyStore({
       users: {
-        me: q.static({}),
-        detail: q.dynamic((userId: string) =>
-          q.static({
-            queryKey: [userId],
-            queryFn: () => Promise.resolve({ id: userId }),
-            settings: q.static({}),
-          })
-        ),
+        me: q.static({ queryKey: null }),
+        detail: q.dynamic((userId: string) => ({
+          queryKey: [userId],
+          queryFn: () => Promise.resolve({ id: userId }),
+          settings: q.static({ queryKey: null }),
+        })),
       },
       todos: {
-        detail: q.dynamic((todoId: string) =>
-          q.static({
-            queryKey: [todoId],
-          })
-        ),
-        list: q.dynamic((filters: Filters) =>
-          q.static({
-            queryKey: [{ filters }],
-          })
-        ),
-        search: q.dynamic((query: string, limit: number) =>
-          q.static({
-            queryKey: [query, limit],
-          })
-        ),
+        detail: q.dynamic((todoId: string) => ({
+          queryKey: [todoId],
+        })),
+        list: q.dynamic((filters: Filters) => ({
+          queryKey: [{ filters }],
+        })),
+        search: q.dynamic((query: string, limit: number) => ({
+          queryKey: [query, limit],
+        })),
       },
     });
 
@@ -44,14 +36,14 @@ describe("createQueryKeyStore", () => {
 
     expect(store).toEqual({
       users: {
-        _def: ["users"],
+        queryKey: ["users"],
         me: {
           queryKey: ["users", "me"],
         },
         detail: expect.any(Function),
       },
       todos: {
-        _def: ["todos"],
+        queryKey: ["todos"],
         detail: expect.any(Function),
         list: expect.any(Function),
         search: expect.any(Function),

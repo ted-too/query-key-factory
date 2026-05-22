@@ -4,10 +4,7 @@ export type {
   QueryStoreSchema,
   QueryStoreUnit,
 } from "../types/query-store";
-export type {
-  ResolveQueryData,
-  TypedUseQueryOptions,
-} from "../types/resolve";
+export type { ResolveQueryData } from "../types/resolve";
 export { createQueryKeyStore } from "./create-query-key-store";
 export { createQueryKeys } from "./create-query-keys";
 export { mergeQueryKeys } from "./merge-query-keys";

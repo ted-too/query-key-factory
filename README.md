@@ -46,13 +46,28 @@ export const session = q.createQueryKeys("session", {
       return data;
     },
     staleTime: 60_000,
-    organizationBySlug: q.dynamic((organizationSlug: string) =>
-      q.static({
-        queryKey: ["organization", organizationSlug],
+    organizationBySlug: q.dynamic((organizationSlug: string) => ({
+      queryKey: ["organization", organizationSlug],
+      queryFn: async ({ signal }) => {
+        const client = createClient();
+        const { data, error } =
+          await client.organization.getFullOrganization({
+            query: { organizationSlug },
+            fetchOptions: { signal },
+          });
+
+        if (error) {
+          return Promise.reject(error);
+        }
+
+        return data;
+      },
+      membership: q.static({
+        queryKey: null,
         queryFn: async ({ signal }) => {
           const client = createClient();
           const { data, error } =
-            await client.organization.getFullOrganization({
+            await client.organization.getActiveMember({
               query: { organizationSlug },
               fetchOptions: { signal },
             });
@@ -63,25 +78,8 @@ export const session = q.createQueryKeys("session", {
 
           return data;
         },
-        membership: q.static({
-          queryKey: null,
-          queryFn: async ({ signal }) => {
-            const client = createClient();
-            const { data, error } =
-              await client.organization.getActiveMember({
-                query: { organizationSlug },
-                fetchOptions: { signal },
-              });
-
-            if (error) {
-              return Promise.reject(error);
-            }
-
-            return data;
-          },
-        }),
-      })
-    ),
+      }),
+    })),
   }),
 });
 ```
@@ -106,6 +104,8 @@ The object can contain:
 - `queryKey`, which appends extra segments after the computed path
 - Nested child nodes created with `q.static(...)` or `q.dynamic(...)`
 
+`q.static({})` (empty body) is rejected at both the type level and at runtime — every node must contribute at least one of: `queryFn`, `queryKey`, or a nested child.
+
 ```ts
 const account = q.createQueryKeys("account", {
   profile: q.static({
@@ -115,7 +115,7 @@ const account = q.createQueryKeys("account", {
 });
 ```
 
-If you want to use only the computed path for a node, use `queryKey: null`.
+If you want to use only the computed path for a node, use `queryKey: null`. `queryKey: undefined` and omitting `queryKey` entirely both behave the same way.
 
 ```ts
 const account = q.createQueryKeys("account", {
@@ -126,55 +126,128 @@ const account = q.createQueryKeys("account", {
 });
 ```
 
+A `q.static(...)` may also have only nested children — useful when you want a parent purely as a namespace scope for invalidation:
+
+```ts
+const users = q.createQueryKeys("users", {
+  me: q.static({
+    sessions: q.static({
+      queryFn: ({ signal }) => fetchSessions({ signal }),
+    }),
+  }),
+});
+
+// users.me.queryKey === ["users", "me"]
+// users.me.sessions.queryKey === ["users", "me", "sessions"]
+```
+
 ### `q.dynamic(...)`
 
-Defines a query node that takes arguments and returns a `q.static(...)` node.
+Defines a query node that takes arguments and returns a plain object describing
+the resolved query. The body has exactly the same shape `q.static(...)` accepts -
+no inner wrapper needed.
 
 ```ts
 const products = q.createQueryKeys("products", {
-  detail: q.dynamic((sku: string) =>
-    q.static({
-      queryKey: [sku],
-      queryFn: ({ signal }) => fetchProductBySku(sku, { signal }),
-    })
-  ),
+  detail: q.dynamic((sku: string) => ({
+    queryKey: [sku],
+    queryFn: ({ signal }) => fetchProductBySku(sku, { signal }),
+  })),
 });
 ```
 
 This gives you:
 
 ```ts
-products.detail._def;
+products.detail.queryKey;
 // ["products", "detail"]
 
 products.detail("sku_123").queryKey;
 // ["products", "detail", "sku_123"]
 ```
 
-## Reading The Output
+### Infinite queries
 
-Every generated branch gives you a stable scope and a concrete query key:
-
-- `._def` is the branch scope
-- `.queryKey` is the fully resolved key for that node
+`q.static(...)` also covers `useInfiniteQuery`. When the definition includes
+`initialPageParam` (and the matching `getNextPageParam`), the node is treated as
+an infinite query: `pageParam` is inferred from `initialPageParam`, and
+`lastPage` / `allPages` are inferred from `queryFn`'s return type.
 
 ```ts
-session._def;
-// ["session"]
+const posts = q.createQueryKeys("posts", {
+  feed: q.static({
+    queryFn: ({ pageParam, signal }) =>
+      fetchFeed({ cursor: pageParam, signal }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    getPreviousPageParam: (firstPage) => firstPage.prevCursor,
+    staleTime: 60_000,
+  }),
+});
+
+useInfiniteQuery(posts.feed);
+```
+
+Inline nested children are not supported on infinite definitions (TypeScript
+can't preserve full `pageParam` / data inference when the literal also contains
+arbitrary nested definitions). Place sibling children alongside the infinite
+node, or wrap the infinite node in a parent `q.static(...)` definition instead.
+
+For parameterized infinite lists, wrap the body of the `q.dynamic(...)` factory
+with `q.static(...)` so the strong infinite-query inference is preserved:
+
+```ts
+const posts = q.createQueryKeys("posts", {
+  byAuthor: q.dynamic((authorId: string) =>
+    q.static({
+      queryKey: [authorId],
+      queryFn: ({ pageParam, signal }) =>
+        fetchAuthorFeed(authorId, { cursor: pageParam, signal }),
+      initialPageParam: 0,
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+    })
+  ),
+});
+
+useInfiniteQuery(posts.byAuthor("alice"));
+```
+
+Returning a plain object from `q.dynamic(...)` is still supported for infinite
+queries, but `pageParam` / `lastPage` won't be inferred automatically -
+annotate those parameters explicitly, or use the wrapped form above to recover
+full inference.
+
+## Reading The Output
+
+Every node — scope container, materialised query, or dynamic callback — exposes a single `queryKey` property. For materialised query nodes it is the concrete cache key. For scope containers and dynamic callbacks it is the *base* path of that branch, which is exactly what TanStack's prefix-matching invalidation expects.
+
+```ts
+session.queryKey;
+// ["session"]                                            (scope container)
 
 session.me.queryKey;
-// ["session", "me"]
+// ["session", "me"]                                      (materialised static node)
 
-session.me.organizationBySlug._def;
-// ["session", "me", "organizationBySlug"]
+session.me.organizationBySlug.queryKey;
+// ["session", "me", "organizationBySlug"]                (dynamic callback — base path)
 
 session.me.organizationBySlug("acme").queryKey;
 // ["session", "me", "organizationBySlug", "organization", "acme"]
+//                                                          (dynamic result — full path)
 ```
 
 The property path is always included automatically.
 
-If you add `queryKey`, those values are appended after the path.
+Use the base path with TanStack's prefix invalidation to clear every variant of a dynamic branch:
+
+```ts
+// Invalidate every variant of `organizationBySlug`:
+queryClient.invalidateQueries({
+  queryKey: session.me.organizationBySlug.queryKey,
+});
+```
+
+If you add `queryKey` to a `q.static` / `q.dynamic` body, those values are appended after the path.
 
 ## Nested Queries
 
@@ -182,19 +255,15 @@ Nested queries live directly beside the query options for that node.
 
 ```ts
 const products = q.createQueryKeys("products", {
-  detail: q.dynamic((sku: string) =>
-    q.static({
-      queryKey: [sku],
-      queryFn: ({ signal }) => fetchProductBySku(sku, { signal }),
-      recommended: q.dynamic((region: string) =>
-        q.static({
-          queryKey: [region],
-          queryFn: ({ signal }) =>
-            fetchRecommendedProducts(sku, region, { signal }),
-        })
-      ),
-    })
-  ),
+  detail: q.dynamic((sku: string) => ({
+    queryKey: [sku],
+    queryFn: ({ signal }) => fetchProductBySku(sku, { signal }),
+    recommended: q.dynamic((region: string) => ({
+      queryKey: [region],
+      queryFn: ({ signal }) =>
+        fetchRecommendedProducts(sku, region, { signal }),
+    })),
+  })),
 });
 ```
 
@@ -210,16 +279,12 @@ Use `q.tupleKey(...)` when you want exact tuple inference through deeper nesting
 
 ```ts
 const products = q.createQueryKeys("products", {
-  detail: q.dynamic((sku: string) =>
-    q.static({
-      queryKey: q.tupleKey(sku),
-      recommended: q.dynamic((region: string) =>
-        q.static({
-          queryKey: q.tupleKey(region),
-        })
-      ),
-    })
-  ),
+  detail: q.dynamic((sku: string) => ({
+    queryKey: q.tupleKey(sku),
+    recommended: q.dynamic((region: string) => ({
+      queryKey: q.tupleKey(region),
+    })),
+  })),
 });
 ```
 
@@ -230,20 +295,16 @@ Use `q.createQueryKeyStore(...)` when you want multiple top-level features in on
 ```ts
 export const queries = q.createQueryKeyStore({
   products: {
-    detail: q.dynamic((sku: string) =>
-      q.static({
-        queryKey: [sku],
-        queryFn: ({ signal }) => fetchProductBySku(sku, { signal }),
-      })
-    ),
+    detail: q.dynamic((sku: string) => ({
+      queryKey: [sku],
+      queryFn: ({ signal }) => fetchProductBySku(sku, { signal }),
+    })),
   },
   collections: {
-    bySlug: q.dynamic((slug: string) =>
-      q.static({
-        queryKey: [slug],
-        queryFn: ({ signal }) => fetchCollectionBySlug(slug, { signal }),
-      })
-    ),
+    bySlug: q.dynamic((slug: string) => ({
+      queryKey: [slug],
+      queryFn: ({ signal }) => fetchCollectionBySlug(slug, { signal }),
+    })),
   },
 });
 ```
@@ -254,25 +315,23 @@ Use `q.mergeQueryKeys(...)` to compose separately declared features.
 
 ```ts
 const products = q.createQueryKeys("products", {
-  detail: q.dynamic((sku: string) =>
-    q.static({
-      queryKey: [sku],
-      queryFn: ({ signal }) => fetchProductBySku(sku, { signal }),
-    })
-  ),
+  detail: q.dynamic((sku: string) => ({
+    queryKey: [sku],
+    queryFn: ({ signal }) => fetchProductBySku(sku, { signal }),
+  })),
 });
 
 const collections = q.createQueryKeys("collections", {
-  bySlug: q.dynamic((slug: string) =>
-    q.static({
-      queryKey: [slug],
-      queryFn: ({ signal }) => fetchCollectionBySlug(slug, { signal }),
-    })
-  ),
+  bySlug: q.dynamic((slug: string) => ({
+    queryKey: [slug],
+    queryFn: ({ signal }) => fetchCollectionBySlug(slug, { signal }),
+  })),
 });
 
 const catalog = q.mergeQueryKeys(products, collections);
 ```
+
+When two units share the same top-level scope (e.g. both are `q.createQueryKeys("todos", ...)`), they are **deep-merged**: non-overlapping inner properties are combined into one scope. If two units try to define the same leaf (a `q.static` / `q.dynamic` node at the same path), `q.mergeQueryKeys` **throws** rather than silently picking one. Rename the colliding leaf or move it under a different scope.
 
 You can also create a namespaced unit that can be merged again later:
 
@@ -287,7 +346,6 @@ import type {
   QueryStore,
   QueryStoreUnit,
   ResolveQueryData,
-  TypedUseQueryOptions,
 } from "@ted-too/query-key-factory/query";
 ```
 
@@ -299,12 +357,22 @@ type SessionData = ResolveQueryData<typeof session.me>;
 type OrganizationData = ResolveQueryData<
   ReturnType<typeof session.me.organizationBySlug>
 >;
-type MembershipOptions = TypedUseQueryOptions<
-  ReturnType<typeof session.me.organizationBySlug>["membership"]
->;
 ```
 
 `ResolveQueryData` works best with concrete nodes. For dynamic nodes, pass `ReturnType<typeof yourFactory>`.
+
+For typing override objects, options bags, or function parameters, use the node's own type directly:
+
+```ts
+// Full options shape (already extends UseQueryOptions):
+type MeOptions = typeof session.me;
+
+// Override shape for a custom hook:
+type MeOverrides = Partial<typeof session.me>;
+
+// Same thing for a dynamic node \u2014 take the call's ReturnType:
+type OrgOptions = ReturnType<typeof session.me.organizationBySlug>;
+```
 
 ## API
 
@@ -326,11 +394,16 @@ Creates a namespaced feature factory that can be merged later.
 
 ### `q.static(definition)`
 
-Creates a static query node.
+Creates a query node. If the definition includes `initialPageParam` (and the
+matching `getNextPageParam`) the node is treated as an infinite query suitable
+for `useInfiniteQuery`; otherwise it is a standard query suitable for
+`useQuery`.
 
 ### `q.dynamic(factory)`
 
-Creates a parameterized query node.
+Creates a parameterized query node. The factory body has the same shape
+`q.static(...)` accepts. For full inference of infinite queries inside a
+dynamic factory, wrap the body in `q.static(...)`.
 
 ### `q.tupleKey(...values)`
 

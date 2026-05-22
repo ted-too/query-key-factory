@@ -13,26 +13,26 @@ interface Filters {
 
 test("q.createQueryKeys infers the generated store unit", () => {
   const users = q.createQueryKeys("users", {
-    me: q.static({}),
+    me: q.static({ queryKey: null }),
     session: q.static({
       queryFn: () => Promise.resolve({ active: true }),
       staleTime: 1000,
     }),
-    detail: q.dynamic((userId: string) =>
-      q.static({
-        queryKey: [userId],
-        queryFn: () => Promise.resolve({ id: userId }),
-        settings: q.static({}),
-      })
-    ),
+    detail: q.dynamic((userId: string) => ({
+      queryKey: [userId],
+      queryFn: () => Promise.resolve({ id: userId }),
+      settings: q.static({ queryKey: null }),
+    })),
   });
 
-  expectTypeOf(users._def).toEqualTypeOf<readonly ["users"]>();
+  expectTypeOf(users.queryKey).toEqualTypeOf<readonly ["users"]>();
   expectTypeOf(users.me.queryKey).toEqualTypeOf<readonly ["users", "me"]>();
   expectTypeOf(users.session.queryKey).toEqualTypeOf<
     readonly ["users", "session"]
   >();
-  expectTypeOf(users.detail._def).toEqualTypeOf<readonly ["users", "detail"]>();
+  expectTypeOf(users.detail.queryKey).toEqualTypeOf<
+    readonly ["users", "detail"]
+  >();
   expectTypeOf(users.detail).parameter(0).toEqualTypeOf<string>();
   expectTypeOf(users.detail("user_1").queryKey).toExtend<readonly unknown[]>();
   expectTypeOf(users.detail("user_1").settings.queryKey).toExtend<
@@ -55,15 +55,14 @@ test("q.tupleKey preserves non-string serializable values", () => {
         page: number,
         preview: boolean,
         filters: { status: "active" | "archived" }
-      ) =>
-        q.static({
-          queryKey: q.tupleKey(page, preview, filters),
-          queryFn: () => Promise.resolve([] as const),
-        })
+      ) => ({
+        queryKey: q.tupleKey(page, preview, filters),
+        queryFn: () => Promise.resolve([] as const),
+      })
     ),
   });
 
-  expectTypeOf(products.filtered._def).toEqualTypeOf<
+  expectTypeOf(products.filtered.queryKey).toEqualTypeOf<
     readonly ["products", "filtered"]
   >();
   expectTypeOf(
@@ -82,30 +81,24 @@ test("q.tupleKey preserves non-string serializable values", () => {
 test("q.createQueryKeyStore infers the query store shape", () => {
   const store = q.createQueryKeyStore({
     users: {
-      me: q.static({}),
-      detail: q.dynamic((userId: string) =>
-        q.static({
-          queryKey: [userId],
-          queryFn: () => Promise.resolve({ id: userId }),
-        })
-      ),
+      me: q.static({ queryKey: null }),
+      detail: q.dynamic((userId: string) => ({
+        queryKey: [userId],
+        queryFn: () => Promise.resolve({ id: userId }),
+      })),
     },
     todos: {
-      detail: q.dynamic((todoId: string) =>
-        q.static({
-          queryKey: [todoId],
-        })
-      ),
-      list: q.dynamic((filters: Filters) =>
-        q.static({
-          queryKey: [{ filters }],
-        })
-      ),
+      detail: q.dynamic((todoId: string) => ({
+        queryKey: [todoId],
+      })),
+      list: q.dynamic((filters: Filters) => ({
+        queryKey: [{ filters }],
+      })),
     },
   });
 
-  expectTypeOf(store.users._def).toEqualTypeOf<readonly ["users"]>();
-  expectTypeOf(store.todos._def).toEqualTypeOf<readonly ["todos"]>();
+  expectTypeOf(store.users.queryKey).toEqualTypeOf<readonly ["users"]>();
+  expectTypeOf(store.todos.queryKey).toEqualTypeOf<readonly ["todos"]>();
   expectTypeOf(store.users.detail("user_1").queryKey).toExtend<
     readonly unknown[]
   >();
@@ -117,36 +110,28 @@ test("q.createQueryKeyStore infers the query store shape", () => {
 
 test("q.mergeQueryKeys infers merged stores and same-key merges", () => {
   const users = q.createQueryKeys("users", {
-    me: q.static({}),
-    detail: q.dynamic((userId: string) =>
-      q.static({
-        queryKey: [userId],
-        queryFn: () => Promise.resolve({ id: userId }),
-        settings: q.static({}),
-      })
-    ),
+    me: q.static({ queryKey: null }),
+    detail: q.dynamic((userId: string) => ({
+      queryKey: [userId],
+      queryFn: () => Promise.resolve({ id: userId }),
+      settings: q.static({ queryKey: null }),
+    })),
   });
   const todos = q.createQueryKeys("todos", {
-    detail: q.dynamic((todoId: string) =>
-      q.static({
-        queryKey: [todoId],
-      })
-    ),
-    list: q.dynamic((filters: Filters) =>
-      q.static({
-        queryKey: [{ filters }],
-      })
-    ),
-    search: q.dynamic((query: string, limit: number) =>
-      q.static({
-        queryKey: [query, limit],
-      })
-    ),
+    detail: q.dynamic((todoId: string) => ({
+      queryKey: [todoId],
+    })),
+    list: q.dynamic((filters: Filters) => ({
+      queryKey: [{ filters }],
+    })),
+    search: q.dynamic((query: string, limit: number) => ({
+      queryKey: [query, limit],
+    })),
   });
   const merged = q.mergeQueryKeys(users, todos);
 
-  expectTypeOf(merged.users._def).toEqualTypeOf<readonly ["users"]>();
-  expectTypeOf(merged.todos._def).toEqualTypeOf<readonly ["todos"]>();
+  expectTypeOf(merged.users.queryKey).toEqualTypeOf<readonly ["users"]>();
+  expectTypeOf(merged.todos.queryKey).toEqualTypeOf<readonly ["todos"]>();
   expectTypeOf(merged.users.detail("user_1").settings.queryKey).toExtend<
     readonly unknown[]
   >();
@@ -156,22 +141,18 @@ test("q.mergeQueryKeys infers merged stores and same-key merges", () => {
   expectTypeOf<ResolveQueryStore<typeof merged>["users"]>().toExtend<object>();
 
   const todosBase = q.createQueryKeys("todos", {
-    detail: q.dynamic((todoId: string) =>
-      q.static({
-        queryKey: [todoId],
-      })
-    ),
+    detail: q.dynamic((todoId: string) => ({
+      queryKey: [todoId],
+    })),
   });
   const todosSearch = q.createQueryKeys("todos", {
-    search: q.dynamic((query: string, limit: number) =>
-      q.static({
-        queryKey: [query, limit],
-      })
-    ),
+    search: q.dynamic((query: string, limit: number) => ({
+      queryKey: [query, limit],
+    })),
   });
   const mergedTodos = q.mergeQueryKeys(todosBase, todosSearch);
 
-  expectTypeOf(mergedTodos.todos._def).toEqualTypeOf<readonly ["todos"]>();
+  expectTypeOf(mergedTodos.todos.queryKey).toEqualTypeOf<readonly ["todos"]>();
   expectTypeOf(mergedTodos.todos.search("query", 5).queryKey).toExtend<
     readonly unknown[]
   >();
@@ -179,32 +160,28 @@ test("q.mergeQueryKeys infers merged stores and same-key merges", () => {
 
 test("nested child queries keep inferred store output", () => {
   const nested = q.createQueryKeys("test", {
-    prop: q.dynamic((value: string) =>
-      q.static({
-        queryKey: [value],
-        nested1: q.static({}),
-        nested2: q.static({
-          queryKey: ["context-prop-2"],
-        }),
-        nested3: q.dynamic((nestedValue: string) =>
-          q.static({
-            queryKey: [nestedValue],
-            nested4: q.static({}),
-          })
-        ),
-      })
-    ),
+    prop: q.dynamic((value: string) => ({
+      queryKey: [value],
+      nested1: q.static({ queryKey: null }),
+      nested2: q.static({
+        queryKey: ["context-prop-2"],
+      }),
+      nested3: q.dynamic((nestedValue: string) => ({
+        queryKey: [nestedValue],
+        nested4: q.static({ queryKey: null }),
+      })),
+    })),
   });
 
-  expectTypeOf(nested._def).toEqualTypeOf<readonly ["test"]>();
-  expectTypeOf(nested.prop._def).toEqualTypeOf<readonly ["test", "prop"]>();
+  expectTypeOf(nested.queryKey).toEqualTypeOf<readonly ["test"]>();
+  expectTypeOf(nested.prop.queryKey).toEqualTypeOf<readonly ["test", "prop"]>();
   expectTypeOf(nested.prop("value").nested1.queryKey).toExtend<
     readonly unknown[]
   >();
   expectTypeOf(nested.prop("value").nested2.queryKey).toExtend<
     readonly unknown[]
   >();
-  expectTypeOf(nested.prop("value").nested3._def).toExtend<
+  expectTypeOf(nested.prop("value").nested3.queryKey).toExtend<
     readonly unknown[]
   >();
   expectTypeOf(
@@ -217,23 +194,21 @@ test("nested child queries keep inferred store output", () => {
 
 test("nested child queryFns keep the same context typing", () => {
   const sessions = q.createQueryKeys("sessions", {
-    get: q.dynamic((sessionId: string) =>
-      q.static({
-        queryKey: [sessionId],
+    get: q.dynamic((sessionId: string) => ({
+      queryKey: [sessionId],
+      queryFn: (ctx) => {
+        expectTypeOf(ctx.signal).toExtend<AbortSignal | undefined>();
+        return Promise.resolve({ id: sessionId, key: ctx.queryKey });
+      },
+      listMessages: q.static({
+        queryKey: [sessionId, "messages"],
         queryFn: (ctx) => {
+          expectTypeOf(ctx).not.toBeAny();
           expectTypeOf(ctx.signal).toExtend<AbortSignal | undefined>();
-          return Promise.resolve({ id: sessionId, key: ctx.queryKey });
+          return Promise.resolve({ sessionId, key: ctx.queryKey });
         },
-        listMessages: q.static({
-          queryKey: [sessionId, "messages"],
-          queryFn: (ctx) => {
-            expectTypeOf(ctx).not.toBeAny();
-            expectTypeOf(ctx.signal).toExtend<AbortSignal | undefined>();
-            return Promise.resolve({ sessionId, key: ctx.queryKey });
-          },
-        }),
-      })
-    ),
+      }),
+    })),
   });
 
   const session = sessions.get("session_1");
@@ -252,24 +227,22 @@ test("static parents preserve nested queryFn context typing", () => {
         expectTypeOf(signal).toExtend<AbortSignal | undefined>();
         return Promise.resolve({ authenticated: true as boolean });
       },
-      organizationBySlug: q.dynamic((organizationSlug: string) =>
-        q.static({
-          queryKey: ["organization", organizationSlug],
+      organizationBySlug: q.dynamic((organizationSlug: string) => ({
+        queryKey: ["organization", organizationSlug],
+        queryFn: ({ signal }) => {
+          expectTypeOf(signal).not.toBeAny();
+          expectTypeOf(signal).toExtend<AbortSignal | undefined>();
+          return Promise.resolve({ slug: organizationSlug });
+        },
+        membership: q.static({
+          queryKey: null,
           queryFn: ({ signal }) => {
             expectTypeOf(signal).not.toBeAny();
             expectTypeOf(signal).toExtend<AbortSignal | undefined>();
-            return Promise.resolve({ slug: organizationSlug });
+            return Promise.resolve({ active: true as boolean });
           },
-          membership: q.static({
-            queryKey: null,
-            queryFn: ({ signal }) => {
-              expectTypeOf(signal).not.toBeAny();
-              expectTypeOf(signal).toExtend<AbortSignal | undefined>();
-              return Promise.resolve({ active: true as boolean });
-            },
-          }),
-        })
-      ),
+        }),
+      })),
     }),
   });
 
@@ -287,30 +260,26 @@ test("static parents preserve nested queryFn context typing", () => {
 
 test("q.tupleKey preserves exact deep nested query tuples", () => {
   const products = q.createQueryKeys("products", {
-    detail: q.dynamic((sku: string) =>
-      q.static({
-        queryKey: q.tupleKey(sku),
-        recommendedProducts: q.dynamic((region: string) =>
-          q.static({
-            queryKey: q.tupleKey(region),
-            byWarehouse: q.dynamic((warehouseId: string) =>
-              q.static({
-                queryKey: q.tupleKey(warehouseId),
-              })
-            ),
-            fallback: q.static({
-              queryKey: q.tupleKey("fallback"),
-            }),
-          })
-        ),
-      })
-    ),
+    detail: q.dynamic((sku: string) => ({
+      queryKey: q.tupleKey(sku),
+      recommendedProducts: q.dynamic((region: string) => ({
+        queryKey: q.tupleKey(region),
+        byWarehouse: q.dynamic((warehouseId: string) => ({
+          queryKey: q.tupleKey(warehouseId),
+        })),
+        fallback: q.static({
+          queryKey: q.tupleKey("fallback"),
+        }),
+      })),
+    })),
   });
 
   expectTypeOf(products.detail("sku_1").queryKey).toEqualTypeOf<
     readonly ["products", "detail", string]
   >();
-  expectTypeOf(products.detail("sku_1").recommendedProducts._def).toEqualTypeOf<
+  expectTypeOf(
+    products.detail("sku_1").recommendedProducts.queryKey
+  ).toEqualTypeOf<
     readonly ["products", "detail", string, "recommendedProducts"]
   >();
   expectTypeOf(
