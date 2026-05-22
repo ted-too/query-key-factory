@@ -4,14 +4,15 @@ import type { AnyMutableOrReadonlyArray, DefinitionKey } from "../types/core";
 import type {
   AnyDynamicQueryStoreUnit,
   AnyQueryKey,
+  DynamicFactory,
   QueryFactorySchema,
   QueryStoreUnit,
   QueryStoreUnitFromSchema,
-  StaticQueryDefinition,
   ValidateFactory,
 } from "../types/query-store";
 import {
   isDynamicQueryDefinition,
+  isInfiniteQueryDefinition,
   isStaticQueryDefinition,
 } from "./query-definition";
 
@@ -25,12 +26,16 @@ type TransformedSchemaMap<Schema extends QueryFactorySchema> = Map<
 const isReadonlyArray = (arg: unknown): arg is AnyMutableOrReadonlyArray =>
   Array.isArray(arg);
 
+const isAnyQueryNode = (value: unknown): boolean =>
+  isStaticQueryDefinition(value) ||
+  isInfiniteQueryDefinition(value) ||
+  isDynamicQueryDefinition(value);
+
 const getNestedQueries = (
   definition: RuntimeNodeShape
 ): QueryFactorySchema | undefined => {
-  const nestedEntries = Object.entries(definition).filter(
-    ([, value]) =>
-      isStaticQueryDefinition(value) || isDynamicQueryDefinition(value)
+  const nestedEntries = Object.entries(definition).filter(([, value]) =>
+    isAnyQueryNode(value)
   );
 
   if (nestedEntries.length === 0) {
@@ -42,10 +47,7 @@ const getNestedQueries = (
 
 const getQueryOptions = (definition: RuntimeNodeShape): RuntimeNodeShape =>
   Object.fromEntries(
-    Object.entries(definition).filter(
-      ([, value]) =>
-        !(isStaticQueryDefinition(value) || isDynamicQueryDefinition(value))
-    )
+    Object.entries(definition).filter(([, value]) => !isAnyQueryNode(value))
   );
 
 export function createQueryKeys<Key extends string>(
@@ -66,7 +68,7 @@ export function createQueryKeys<
   schema?: Schema & ValidateFactory<Schema>
 ): QueryStoreUnit<Key> | QueryStoreUnitFromSchema<Key, Schema> {
   const defKey: DefinitionKey<[Key]> = {
-    _def: [queryDef] as const,
+    queryKey: [queryDef] as const,
   };
 
   const createNestedEntries = (
@@ -74,30 +76,24 @@ export function createQueryKeys<
     key: AnyQueryKey
   ) => omitPrototype(Object.fromEntries(transformSchema(nestedQueries, key)));
 
-  const createStaticResult = (
-    key: readonly [...AnyQueryKey, string],
-    node: StaticQueryDefinition<Record<string, unknown>>,
-    includeDefinitionKey: boolean
+  const createNodeResult = (
+    key: readonly [...AnyQueryKey, string] | readonly [...AnyQueryKey],
+    shape: RuntimeNodeShape
   ) => {
-    const options = getQueryOptions(node.definition);
+    const options = getQueryOptions(shape);
     const suffix = options.queryKey;
     const innerKey = [
       ...key,
       ...(isReadonlyArray(suffix) ? suffix : []),
     ] as const;
-    const nestedQueries = getNestedQueries(node.definition);
+    const nestedQueries = getNestedQueries(shape);
     const nestedEntries =
       nestedQueries == null
         ? undefined
         : createNestedEntries(nestedQueries, innerKey);
     const { queryKey: _queryKey, ...restOptions } = options;
-    const definitionEntry =
-      includeDefinitionKey && isReadonlyArray(suffix)
-        ? { _def: key }
-        : undefined;
 
     return omitPrototype({
-      ...definitionEntry,
       ...nestedEntries,
       ...restOptions,
       queryKey: innerKey,
@@ -115,33 +111,48 @@ export function createQueryKeys<
         );
       }
 
-      const result = (
-        definition.definition as (
-          ...callbackArgs: readonly unknown[]
-        ) => StaticQueryDefinition<Record<string, unknown>>
-      )(...args);
+      const factoryResult = (definition.definition as DynamicFactory)(...args);
 
-      if (!isStaticQueryDefinition(result)) {
-        throw new Error("Dynamic query definitions must return q.static(...)");
+      if (
+        typeof factoryResult !== "object" ||
+        factoryResult === null ||
+        Array.isArray(factoryResult)
+      ) {
+        throw new Error(
+          "q.dynamic factories must return a plain object describing the query"
+        );
       }
 
-      return createStaticResult(key, result, false);
+      const shape: RuntimeNodeShape =
+        isStaticQueryDefinition(factoryResult) ||
+        isInfiniteQueryDefinition(factoryResult)
+          ? (factoryResult.definition as RuntimeNodeShape)
+          : (factoryResult as RuntimeNodeShape);
+
+      return createNodeResult(key, shape);
     }) as unknown as AnyDynamicQueryStoreUnit;
 
-    resultCallback._def = key;
+    resultCallback.queryKey = key;
 
     return resultCallback;
   };
 
-  const createStaticValue = (
+  const createStaticOrInfiniteValue = (
     key: readonly [...AnyQueryKey, string],
     definition: QueryFactorySchema[string]
   ) => {
-    if (!isStaticQueryDefinition(definition)) {
-      throw new Error("Static query definitions must be created with q.static");
+    if (
+      !(
+        isStaticQueryDefinition(definition) ||
+        isInfiniteQueryDefinition(definition)
+      )
+    ) {
+      throw new Error(
+        "Query definitions must be created with q.static or q.dynamic"
+      );
     }
 
-    return createStaticResult(key, definition, true);
+    return createNodeResult(key, definition.definition);
   };
 
   if (schema == null) {
@@ -168,7 +179,7 @@ export function createQueryKeys<
 
         const transformedValue = isDynamicQueryDefinition(value)
           ? createDynamicCallback(key, value)
-          : createStaticValue(key, value);
+          : createStaticOrInfiniteValue(key, value);
 
         factoryMap.set(factoryKey as $FactoryProperty, transformedValue);
         return factoryMap;
@@ -179,7 +190,7 @@ export function createQueryKeys<
 
   const transformedSchema = transformSchema(
     schema as QueryFactorySchema,
-    defKey._def
+    defKey.queryKey
   );
 
   return omitPrototype({

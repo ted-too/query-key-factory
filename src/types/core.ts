@@ -11,5 +11,5 @@ export type Prettify<T> = {
 } & {};
 
 export interface DefinitionKey<Key extends AnyMutableOrReadonlyArray> {
-  _def: readonly [...Key];
+  queryKey: readonly [...Key];
 }

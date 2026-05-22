@@ -1,0 +1,14 @@
+---
+"@ted-too/query-key-factory": minor
+---
+
+Refine the `q` DSL contract and tighten its semantics:
+
+- **Single identifier per node.** Removed `_def` from the public API. Every node — top-level scope, materialised static/infinite leaf, dynamic callback, and dynamic result — now exposes only `queryKey`. For scopes and dynamic callbacks this is the *base* path; for materialised targets it is the full cache key. Use the base path with TanStack's prefix invalidation: `queryClient.invalidateQueries({ queryKey: users.detail.queryKey })`.
+- **Unified static + infinite under `q.static`.** Removed the separate `q.infinite` factory. `q.static` becomes an infinite query when its body includes `initialPageParam` (and the matching `getNextPageParam`); `pageParam`, `lastPage`, and `allPages` are inferred from `initialPageParam` and `queryFn`'s return type.
+- **`q.dynamic` accepts plain objects.** Factories no longer need to wrap their return in `q.static({...})`; `q.dynamic((id: string) => ({ queryKey: [id], queryFn: ... }))` is enough. Wrapping with `q.static` is still supported when you want strict excess-property checking or stronger inference for infinite-query callbacks.
+- **`q.static({})` is rejected at the type and runtime level.** Every node must contribute at least one of: `queryFn`, `queryKey`, or a nested child. Namespace-only parents (`q.static({ sessions: q.static({ queryFn }) })`) are still permitted.
+- **`queryKey: null`, `queryKey: undefined`, and an absent `queryKey` are equivalent** — all three resolve to the computed path with no suffix.
+- **`q.mergeQueryKeys` deep-merges structural scopes and throws on leaf collisions.** Two units sharing a top-level scope (e.g. both `q.createQueryKeys("todos", ...)`) now combine their non-overlapping inner properties into one scope. Two units that try to define the same query target throw `q.mergeQueryKeys: leaf collision at "..."` rather than silently picking one. Leaf detection uses "function OR has `queryFn`", so namespace-only parents merge cleanly.
+- **Stronger `queryFn` and dynamic-factory inference.** `signal`, `meta`, `pageParam`, `lastPage`, `allPages`, etc. flow correctly from the surrounding `q.static` / `q.dynamic` body in both top-level and nested positions. Dynamic factories may be called many times; calls with the same arguments are deep-equal (memoisation is permitted, not required).
+- **Removed `TypedUseQueryOptions` and `TypedUseInfiniteQueryOptions` helpers** — they were unusable in practice due to variance on TanStack's options shape. Use native `Parameters<typeof useQuery>[0]` / `ReturnType<typeof users.detail>` patterns instead.
