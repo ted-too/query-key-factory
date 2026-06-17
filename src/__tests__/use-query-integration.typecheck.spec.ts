@@ -141,3 +141,77 @@ test("dynamic q.dynamic node preserves common TanStack query options", () => {
   expectTypeOf(node.gcTime).toExtend<number | undefined>();
   expectTypeOf(node.meta).toExtend<Record<string, unknown> | undefined>();
 });
+
+test("static dependent node only carries the options the caller authored", () => {
+  const reference = q.createQueryKeys("reference", {
+    config: q.static({
+      queryFn: () => Promise.resolve({ secretKey: "s", token: "t" }),
+    }),
+  });
+
+  const session = q.createQueryKeys("session", {
+    offers: q.static({
+      dependsOn: { config: reference.config },
+      staleTime: 60_000,
+      queryFn: (_ctx, { config }) =>
+        Promise.resolve([{ id: 1, token: config.token }]),
+    }),
+  });
+
+  const node = session.offers;
+
+  // A dependent node must only carry the options the caller authored, not the
+  // entire react-query option bag. A leaked `enabled: (query) => boolean` makes
+  // the node unassignable to stricter consumers such as `@tanstack/vue-query`.
+  expectTypeOf(node).not.toHaveProperty("enabled");
+  expectTypeOf(node).not.toHaveProperty("retry");
+  expectTypeOf(node).not.toHaveProperty("refetchOnWindowFocus");
+  expectTypeOf(node).toHaveProperty("staleTime");
+
+  expectTypeOf(node.dependsOn.config.queryKey).toEqualTypeOf<
+    readonly ["reference", "config"]
+  >();
+});
+
+test("plain-object dynamic dependent is useQuery-ready without phantom options", () => {
+  const config = q.createQueryKeys("config", {
+    byProperty: q.dynamic((propertyId: string) => ({
+      queryKey: [propertyId],
+      queryFn: () => Promise.resolve({ secretKey: "s", token: "t" } as const),
+    })),
+  });
+
+  const property = q.createQueryKeys("property", {
+    offers: q.dynamic((propertyId: string) => ({
+      queryKey: [propertyId],
+      dependsOn: { config: config.byProperty(propertyId) },
+      queryFn: (_ctx, { config: cfg }) =>
+        Promise.resolve([{ id: 1, token: cfg.token }]),
+    })),
+  });
+
+  const node = property.offers("property_1");
+
+  // The node must not carry option keys that were never declared. A leaked
+  // option bag (e.g. a react-query `enabled: (query) => boolean`) makes the
+  // node unassignable to stricter consumers such as `@tanstack/vue-query`.
+  expectTypeOf(node).not.toHaveProperty("enabled");
+  expectTypeOf(node).not.toHaveProperty("retry");
+  expectTypeOf(node).not.toHaveProperty("refetchOnWindowFocus");
+
+  expectTypeOf(node.queryKey).toEqualTypeOf<
+    readonly ["property", "offers", string]
+  >();
+  expectTypeOf(node.dependsOn.config.queryKey).toEqualTypeOf<
+    readonly ["config", "byProperty", string]
+  >();
+
+  expectTypeOf(node).toExtend<
+    UseQueryOptions<
+      { id: number; token: string }[],
+      Error,
+      { id: number; token: string }[],
+      readonly ["property", "offers", string]
+    >
+  >();
+});

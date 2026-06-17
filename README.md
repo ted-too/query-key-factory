@@ -323,30 +323,24 @@ queryClient.invalidateQueries({
 
 ### Dynamic and infinite dependents
 
-For a parameterized dependent, wrap the `q.dynamic(...)` body in `q.static(...)`
-so the dependency inference is preserved:
+A parameterized dependent is just a plain `q.dynamic(...)` factory body with a
+`dependsOn` map. The factory argument, the resolved dependencies, and any options are all inferred:
 
 ```ts
 const posts = q.createQueryKeys("posts", {
-  byAuthor: q.dynamic((userId: string) =>
-    q.static({
-      queryKey: [userId],
-      dependsOn: { author: users.detail(userId) },
-      queryFn: (_ctx, { author }) =>
-        fetchPostsByAuthor(author.id),
-    })
-  ),
+  byAuthor: q.dynamic((userId: string) => ({
+    queryKey: [userId],
+    dependsOn: { author: users.detail(userId) },
+    staleTime: 60_000,
+    queryFn: (_ctx, { author }) => fetchPostsByAuthor(author.id),
+  })),
 });
 
 posts.byAuthor("user_1").dependsOn.author.queryKey;
 // ["users", "detail", "user_1"]
 ```
 
-Infinite queries can also declare `dependsOn`, the page type, and
-the resolved dependencies are all inferred, no annotations needed. As with any
-infinite definition, declare `queryFn` before `getNextPageParam` so the page
-type is inferred from `queryFn`'s return rather than from `getNextPageParam`'s
-`lastPage`:
+Infinite queries can also declare `dependsOn`; the page param and the resolved dependencies are inferred, both for fixed nodes and dynamic factories:
 
 ```ts
 const feed = q.createQueryKeys("feed", {
@@ -359,7 +353,19 @@ const feed = q.createQueryKeys("feed", {
   }),
 });
 
+const topicFeed = q.createQueryKeys("topicFeed", {
+  byTopic: q.dynamic((topic: string) => ({
+    queryKey: [topic],
+    dependsOn: { settings: settings.feed },
+    initialPageParam: 0,
+    queryFn: ({ pageParam }, { settings }) =>
+      fetchTopicFeed(topic, { cursor: pageParam, pageSize: settings.pageSize }),
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+  })),
+});
+
 useInfiniteQuery(feed.posts);
+useInfiniteQuery(topicFeed.byTopic("typescript"));
 ```
 
 Like infinite queries, dependent definitions don't support inline nested
@@ -552,8 +558,9 @@ data to `queryFn` as a second argument. See [Dependent Queries](#dependent-queri
 ### `q.dynamic(factory)`
 
 Creates a parameterized query node. The factory body has the same shape
-`q.static(...)` accepts. For full inference of infinite queries inside a
-dynamic factory, wrap the body in `q.static(...)`.
+`q.static(...)` accepts — including `dependsOn` maps — so dependent dynamic
+nodes need no `q.static(...)` wrapper. For the strongest `pageParam` / `lastPage`
+inference on an infinite dynamic node, wrap the body in `q.static(...)`.
 
 ### `q.tupleKey(...values)`
 

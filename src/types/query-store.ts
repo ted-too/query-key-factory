@@ -54,7 +54,7 @@ export type AnyStaticOrInfiniteQueryDefinition =
 export type DynamicFactory = (
   // biome-ignore lint/suspicious/noExplicitAny: bivariance is required so callers' specific TArgs assign to DynamicFactory
   ...args: any[]
-) => Record<string, unknown> | AnyStaticOrInfiniteQueryDefinition;
+) => object;
 
 export interface DynamicQueryDefinition<
   Factory extends DynamicFactory = DynamicFactory,
@@ -140,6 +140,39 @@ export type StaticDefinitionShape = Partial<ContextualQueryOptions> & {
 };
 
 /**
+ * Contextual hints intersected with a `q.dynamic(...)` factory body (as
+ * `Shape & DynamicFactoryBodyHints<...>`). This lets a single `dynamicQuery`
+ * signature both capture the exact literal via `const Shape` (preserving
+ * `queryKey` tuples, nested children, and option fields for output routing) and
+ * co-infer `dependsOn` / `initialPageParam` / the page type so the (optionally
+ * two-argument) `queryFn` is contextually typed.
+ *
+ * Every member is optional so wrapped definitions (`q.static(...)` results) and
+ * plain static bodies pass through unchanged. A single signature is mandatory:
+ * TypeScript drops contextual typing of a nested `queryFn` when an *overloaded*
+ * call's argument is a factory return, so dependent inference only survives with
+ * exactly one call signature.
+ */
+export interface DynamicFactoryBodyHints<
+  TQueryFnData,
+  TPageParam,
+  TDependsOn extends DependsOnMap,
+> {
+  dependsOn?: TDependsOn;
+  getNextPageParam?: (
+    lastPage: NoInfer<TQueryFnData>,
+    allPages: NoInfer<TQueryFnData>[],
+    lastPageParam: NoInfer<TPageParam>,
+    allPageParams: NoInfer<TPageParam>[]
+  ) => unknown;
+  initialPageParam?: TPageParam;
+  queryFn?: (
+    context: QueryFunctionContext<AnyMutableOrReadonlyArray, TPageParam>,
+    dependencies: ResolveDependsOnData<TDependsOn>
+  ) => TQueryFnData | Promise<TQueryFnData>;
+}
+
+/**
  * Minimal options shape a dependency must expose so it can be loaded via
  * `queryClient.ensureQueryData`. Every materialised node produced by this
  * library already satisfies it.
@@ -219,6 +252,29 @@ export type DependentDefinitionShape<
     dependencies: ResolveDependsOnData<TDependsOn>
   ) => TQueryFnData | Promise<TQueryFnData>;
 };
+
+/**
+ * Contextual hints intersected with a dependent `q.static(...)` body (as
+ * `Shape & DependentDefinitionHints<...>`). A required `dependsOn` discriminates
+ * dependent bodies from plain static ones, and the two-argument `queryFn` is
+ * contextually typed from the co-inferred dependency map.
+ *
+ * Crucially, `const Shape` captures only the keys the caller actually authored,
+ * so the materialised node never carries the full `Partial<ContextualQueryOptions>`
+ * option bag (~30 phantom optional fields). That phantom bag — typed with
+ * react-query's `enabled: (query) => boolean` etc. — otherwise makes a dependent
+ * node unassignable to stricter consumers such as `@tanstack/vue-query`.
+ */
+export interface DependentDefinitionHints<
+  TQueryFnData,
+  TDependsOn extends DependsOnMap,
+> {
+  dependsOn: TDependsOn;
+  queryFn: (
+    context: QueryFunctionContext<AnyMutableOrReadonlyArray>,
+    dependencies: ResolveDependsOnData<TDependsOn>
+  ) => TQueryFnData | Promise<TQueryFnData>;
+}
 
 /**
  * Surfaced when a caller passes `q.static({})`. The message is a string
