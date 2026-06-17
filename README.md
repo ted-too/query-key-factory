@@ -103,6 +103,7 @@ The object can contain:
 - TanStack query options such as `queryFn`, `staleTime`, `gcTime`, `meta`, `select`, `enabled`, and `refetchOnWindowFocus`
 - `queryKey`, which appends extra segments after the computed path
 - Nested child nodes created with `q.static(...)` or `q.dynamic(...)`
+- `dependsOn`, a map of dependencies to prefetch before `queryFn` runs (see [Dependent Queries](#dependent-queries))
 
 `q.static({})` (empty body) is rejected at both the type level and at runtime — every node must contribute at least one of: `queryFn`, `queryKey`, or a nested child.
 
@@ -216,6 +217,153 @@ Returning a plain object from `q.dynamic(...)` is still supported for infinite
 queries, but `pageParam` / `lastPage` won't be inferred automatically -
 annotate those parameters explicitly, or use the wrapped form above to recover
 full inference.
+
+### Dependent Queries
+
+A `q.static(...)` node can declare a `dependsOn` map. Each dependency is loaded
+before the node's own `queryFn` runs, and the resolved data is passed to
+`queryFn` as a second argument, keyed by the same names.
+
+```ts
+import * as q from "@ted-too/query-key-factory/query";
+
+const reference = q.createQueryKeys("reference", {
+  countries: q.static({
+    queryFn: ({ signal }) => fetchCountries({ signal }),
+  }),
+});
+
+export const session = q.createQueryKeys("session", {
+  me: q.static({
+    dependsOn: {
+      // Reference an existing node to reuse its cache entry.
+      countries: reference.countries,
+    },
+    queryFn: async ({ signal }, { countries }) => {
+      // `countries` is typed as the resolved data of `reference.countries`.
+      const { data, error } = await getSession({ countries, signal });
+      if (error) {
+        return Promise.reject(error);
+      }
+      return data;
+    },
+    staleTime: 60_000,
+  }),
+});
+```
+
+`session.me` is still a normal query node — use it directly:
+
+```ts
+useQuery(session.me);
+```
+
+Under the hood the emitted `queryFn` loads every dependency in parallel via
+`queryClient.ensureQueryData` (using the `client` on TanStack's
+`QueryFunctionContext`) and then calls your `queryFn` with the results. No
+`queryClient` needs to be threaded through your call sites, and it works the
+same way during SSR / prefetching. Because the dependencies don't depend on each
+other, they run in parallel, flattening the request waterfall to a single level
+(dependencies, then the node).
+
+Dependencies can be declared two ways:
+
+- **A reference to a node** — `reference.countries`, or `products.detail("sku_123")`
+  for a dynamic node. This reuses that node's canonical cache entry.
+- **An inline definition** (escape hatch) — `q.static({ queryFn: ... })`. Inline
+  dependencies get their own derived cache key under the parent node
+  (`["session", "me", "countries"]` below) and therefore do **not** share a
+  cache entry with any canonical query declared elsewhere.
+
+```ts
+const session = q.createQueryKeys("session", {
+  me: q.static({
+    dependsOn: {
+      countries: q.static({
+        queryFn: ({ signal }) => fetchCountries({ signal }),
+      }),
+    },
+    queryFn: async ({ signal }, { countries }) => fetchSession(countries, { signal }),
+  }),
+});
+```
+
+### Reactivity
+
+Unlike a plain one-shot prefetch, `dependsOn` is **reactive**: when a dependency
+commits new data because it refetched, was invalidated, or had its data set
+directly every dependent that consumed it is automatically invalidated, so any
+active observer refetches against the fresh dependency data.
+
+```ts
+// Re-runs `session.me` (if observed) against the new countries:
+queryClient.invalidateQueries({ queryKey: reference.countries.queryKey });
+queryClient.setQueryData(reference.countries.queryKey, ["US", "GB"]);
+```
+
+> [!NOTE]
+> The node still exposes a single status: if a dependency rejects, the node rejects.
+> Dependency cycles are not supported.
+
+### Inspecting and invalidating dependencies
+
+The resolved `dependsOn` map is exposed on the node, so you can reach each
+dependency's `queryKey` for manual invalidation, this is useful for inline
+dependencies, whose derived key lives under the parent node:
+
+```ts
+session.me.dependsOn.countries.queryKey;
+// ["reference", "countries"]  (reference) — or, for an inline dependency:
+// ["session", "me", "countries"]
+
+queryClient.invalidateQueries({
+  queryKey: session.me.dependsOn.countries.queryKey,
+});
+```
+
+### Dynamic and infinite dependents
+
+For a parameterized dependent, wrap the `q.dynamic(...)` body in `q.static(...)`
+so the dependency inference is preserved:
+
+```ts
+const posts = q.createQueryKeys("posts", {
+  byAuthor: q.dynamic((userId: string) =>
+    q.static({
+      queryKey: [userId],
+      dependsOn: { author: users.detail(userId) },
+      queryFn: (_ctx, { author }) =>
+        fetchPostsByAuthor(author.id),
+    })
+  ),
+});
+
+posts.byAuthor("user_1").dependsOn.author.queryKey;
+// ["users", "detail", "user_1"]
+```
+
+Infinite queries can also declare `dependsOn`, the page type, and
+the resolved dependencies are all inferred, no annotations needed. As with any
+infinite definition, declare `queryFn` before `getNextPageParam` so the page
+type is inferred from `queryFn`'s return rather than from `getNextPageParam`'s
+`lastPage`:
+
+```ts
+const feed = q.createQueryKeys("feed", {
+  posts: q.static({
+    dependsOn: { settings: settings.feed },
+    initialPageParam: 0,
+    queryFn: ({ pageParam }, { settings }) =>
+      fetchFeed({ cursor: pageParam, pageSize: settings.pageSize }),
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+  }),
+});
+
+useInfiniteQuery(feed.posts);
+```
+
+Like infinite queries, dependent definitions don't support inline nested
+children thus place siblings alongside the node or wrap it in a parent scope.
 
 ## Reading The Output
 
@@ -397,7 +545,9 @@ Creates a namespaced feature factory that can be merged later.
 Creates a query node. If the definition includes `initialPageParam` (and the
 matching `getNextPageParam`) the node is treated as an infinite query suitable
 for `useInfiniteQuery`; otherwise it is a standard query suitable for
-`useQuery`.
+`useQuery`. If the definition includes a `dependsOn` map, the node prefetches
+those dependencies (via `queryClient.ensureQueryData`) and passes their resolved
+data to `queryFn` as a second argument. See [Dependent Queries](#dependent-queries).
 
 ### `q.dynamic(factory)`
 

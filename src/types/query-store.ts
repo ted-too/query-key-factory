@@ -3,6 +3,7 @@ import type {
   InfiniteData,
   InfiniteQueryObserverOptions,
   QueryFunction,
+  QueryFunctionContext,
   QueryObserverOptions,
 } from "@tanstack/query-core";
 import type { ExtractInternalKeys, InternalKey } from "../internals/types";
@@ -13,6 +14,15 @@ import type {
 } from "./core";
 
 export type AnyQueryKey = readonly [string, ...unknown[]];
+
+/**
+ * Structural "any function" used only for arity-agnostic gating: dependent
+ * nodes author a two-argument `queryFn` (context + resolved dependencies),
+ * which is not assignable to TanStack's single-argument `QueryFunction`. The
+ * emitted node always exposes a standard single-argument `QueryFunction`.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: matching a function of any arity is intentional here
+type AnyQueryFnLike = (...args: any[]) => unknown;
 
 export interface StaticQueryDefinition<
   Shape extends Record<string, unknown> = Record<string, unknown>,
@@ -130,6 +140,87 @@ export type StaticDefinitionShape = Partial<ContextualQueryOptions> & {
 };
 
 /**
+ * Minimal options shape a dependency must expose so it can be loaded via
+ * `queryClient.ensureQueryData`. Every materialised node produced by this
+ * library already satisfies it.
+ */
+interface DependencyQueryOptions {
+  queryFn: (...args: never[]) => unknown;
+  queryKey: AnyMutableOrReadonlyArray;
+}
+
+/**
+ * A single entry in a `dependsOn` map. Either:
+ *   - resolved query options directly (a materialised node, e.g.
+ *     `reference.countries` or `products.detail(sku)`) — preferred, since it
+ *     reuses that query's canonical cache entry; or
+ *   - an inline `q.static(...)` / `q.infinite(...)` definition (escape hatch),
+ *     which gets its own derived cache key under the parent node and therefore
+ *     does not share a cache entry with any canonical query elsewhere.
+ */
+export type DependencyInput =
+  | DependencyQueryOptions
+  | AnyStaticOrInfiniteQueryDefinition;
+
+export type DependsOnMap = Record<string, DependencyInput>;
+
+/** Default `dependsOn` for nodes that declare none: an empty dependency map. */
+export type EmptyDependsOnMap = Record<never, never>;
+
+type DependencyFnData<Fetcher> = Fetcher extends (
+  ...args: never[]
+) => infer Result
+  ? Awaited<Result>
+  : unknown;
+
+type ResolveDependencyData<Dependency> =
+  Dependency extends StaticQueryDefinition<infer Shape>
+    ? Shape extends { queryFn: infer Fetcher }
+      ? DependencyFnData<Fetcher>
+      : unknown
+    : Dependency extends InfiniteQueryDefinition<infer Shape>
+      ? Shape extends { queryFn: infer Fetcher }
+        ? DependencyFnData<Fetcher>
+        : unknown
+      : Dependency extends { queryFn: infer Fetcher }
+        ? DependencyFnData<Fetcher>
+        : unknown;
+
+/**
+ * Maps a `dependsOn` declaration to the resolved-data object handed to the
+ * authored `queryFn` as its second argument.
+ */
+export type ResolveDependsOnData<Dependencies extends DependsOnMap> = {
+  [Name in keyof Dependencies]: ResolveDependencyData<Dependencies[Name]>;
+};
+
+/**
+ * Input shape for a `q.static(...)` node that prefetches dependencies before
+ * running its own `queryFn`. The authored `queryFn` receives a second argument
+ * holding the resolved data for each `dependsOn` entry, keyed by the same name.
+ *
+ * Dependencies are loaded in parallel via `queryClient.ensureQueryData`, which
+ * returns cached data when present and only fetches when absent. This is a
+ * one-shot prefetch, not a reactive subscription: invalidating a dependency
+ * does not refetch this node.
+ *
+ * Like infinite definitions, dependent definitions do not support inline nested
+ * children; place siblings alongside the node or wrap it in a parent scope.
+ */
+export type DependentDefinitionShape<
+  TQueryFnData,
+  TDependsOn extends DependsOnMap,
+  TQueryKey extends AnyMutableOrReadonlyArray | null | undefined = undefined,
+> = Omit<Partial<ContextualQueryOptions>, "queryKey" | "queryFn"> & {
+  queryKey?: TQueryKey;
+  dependsOn: TDependsOn;
+  queryFn: (
+    context: QueryFunctionContext<AnyMutableOrReadonlyArray>,
+    dependencies: ResolveDependsOnData<TDependsOn>
+  ) => TQueryFnData | Promise<TQueryFnData>;
+};
+
+/**
  * Surfaced when a caller passes `q.static({})`. The message is a string
  * literal so TypeScript renders it in the diagnostic (e.g. "Type '{}' is not
  * assignable to type 'EmptyStaticDefinitionError'.").
@@ -151,16 +242,30 @@ export interface EmptyStaticDefinitionError {
 export type InfiniteDefinitionShape<
   TQueryFnData,
   TPageParam,
+  TDependsOn extends DependsOnMap = EmptyDependsOnMap,
   TQueryKey extends AnyMutableOrReadonlyArray | null | undefined = undefined,
 > = Omit<
   Partial<ContextualInfiniteQueryOptions<TQueryFnData, TPageParam>>,
-  "queryKey"
+  "queryKey" | "queryFn"
 > & {
   queryKey?: TQueryKey;
+  dependsOn?: TDependsOn;
   initialPageParam: TPageParam;
+  // `NoInfer` keeps `getNextPageParam` a pure consumer of the page data /
+  // page-param types: `TQueryFnData` is inferred solely from `queryFn`'s return
+  // and `TPageParam` solely from `initialPageParam`. Without this, a non-empty
+  // `dependsOn` (which adds a second `queryFn` argument) makes `lastPage` a
+  // competing inference site and collapses the page type.
   getNextPageParam: NonNullable<
-    ContextualInfiniteQueryOptions<TQueryFnData, TPageParam>["getNextPageParam"]
+    ContextualInfiniteQueryOptions<
+      NoInfer<TQueryFnData>,
+      NoInfer<TPageParam>
+    >["getNextPageParam"]
   >;
+  queryFn: (
+    context: QueryFunctionContext<AnyMutableOrReadonlyArray, TPageParam>,
+    dependencies: ResolveDependsOnData<TDependsOn>
+  ) => TQueryFnData | Promise<TQueryFnData>;
 };
 
 export type ValidateStaticDefinition<Shape extends Record<string, unknown>> =
@@ -218,7 +323,7 @@ type NodeQueryKey<Shape extends object> = Shape extends {
 type NodeQueryFn<Shape extends object> = Shape extends {
   queryFn?: infer Fetcher;
 }
-  ? Fetcher extends (...args: never[]) => unknown
+  ? Fetcher extends AnyQueryFnLike
     ? Fetcher
     : never
   : never;
@@ -255,6 +360,38 @@ type NodeRebindableOptionsForInfinite<
     : NodeOptionOverrides<Shape>[K];
 };
 
+/**
+ * `ContextualQueryOptions` rebound to a concrete data type and composed key, so
+ * dependent-node option overrides (e.g. `staleTime`, `enabled`) line up with
+ * the `useQuery` slot once the hook infers its own generics.
+ */
+type ContextualQueryOptionsOf<
+  TQueryFnData,
+  TQueryKey extends AnyMutableOrReadonlyArray,
+> = Omit<
+  QueryObserverOptions<
+    TQueryFnData,
+    DefaultError,
+    TQueryFnData,
+    TQueryFnData,
+    TQueryKey
+  >,
+  "queryKey"
+>;
+
+type NodeRebindableOptions<
+  Shape extends object,
+  Keys extends AnyMutableOrReadonlyArray,
+  TQueryFnData,
+> = {
+  [K in keyof NodeOptionOverrides<Shape>]: K extends keyof ContextualQueryOptionsOf<
+    TQueryFnData,
+    Keys
+  >
+    ? ContextualQueryOptionsOf<TQueryFnData, Keys>[K]
+    : NodeOptionOverrides<Shape>[K];
+};
+
 type NodePageParam<Shape extends object> = Shape extends {
   initialPageParam: infer PageParam;
 }
@@ -265,7 +402,7 @@ type NodePageParam<Shape extends object> = Shape extends {
 
 export interface QueryOptionsStruct<
   Keys extends AnyMutableOrReadonlyArray,
-  Fetcher extends QueryFunction,
+  Fetcher extends AnyQueryFnLike,
   FetcherResult extends ReturnType<Fetcher> = ReturnType<Fetcher>,
 > {
   queryFn: QueryFunction<Awaited<FetcherResult>, readonly [...Keys]>;
@@ -274,7 +411,7 @@ export interface QueryOptionsStruct<
 
 export interface InfiniteQueryOptionsStruct<
   Keys extends AnyMutableOrReadonlyArray,
-  Fetcher extends QueryFunction,
+  Fetcher extends AnyQueryFnLike,
   PageParam,
   FetcherResult extends ReturnType<Fetcher> = ReturnType<Fetcher>,
 > {
@@ -294,7 +431,7 @@ type NestedFactoryOutputs<
     : Shape[P] extends InfiniteQueryDefinition<infer ChildShape>
       ? InfiniteFactoryOutput<[...Keys, P], ChildShape>
       : Shape[P] extends StaticQueryDefinition<infer ChildShape>
-        ? StaticFactoryOutput<[...Keys, P], ChildShape>
+        ? StaticOrDependentFactoryOutput<[...Keys, P], ChildShape>
         : never;
 };
 
@@ -312,7 +449,7 @@ type FactoryRecordOutput<
 > = Prettify<
   NodeOptionOverrides<Shape> & {
     queryKey: readonly [...ComposedKey];
-  } & (NodeQueryFn<Shape> extends QueryFunction
+  } & (NodeQueryFn<Shape> extends AnyQueryFnLike
       ? QueryOptionsStruct<ComposedKey, NodeQueryFn<Shape>>
       : object) &
     NestedFactoryOutputs<ComposedKey, Shape>
@@ -330,8 +467,8 @@ type InfiniteFactoryRecordOutput<
     ExtractNullableKey<SchemaQueryKey>
   >,
   TPageParam = NodePageParam<Shape>,
-  TQueryFnData = NodeQueryFn<Shape> extends QueryFunction<infer FetcherData>
-    ? Awaited<FetcherData>
+  TQueryFnData = NodeQueryFn<Shape> extends AnyQueryFnLike
+    ? Awaited<ReturnType<NodeQueryFn<Shape>>>
     : unknown,
 > = Prettify<
   NodeRebindableOptionsForInfinite<
@@ -341,11 +478,88 @@ type InfiniteFactoryRecordOutput<
     TPageParam
   > & {
     queryKey: readonly [...ComposedKey];
-  } & (NodeQueryFn<Shape> extends QueryFunction
+  } & (NodeQueryFn<Shape> extends AnyQueryFnLike
       ? InfiniteQueryOptionsStruct<ComposedKey, NodeQueryFn<Shape>, TPageParam>
       : object) &
+    DependsOnOutputFor<Shape, readonly [...ComposedKey]> &
     NestedFactoryOutputs<ComposedKey, Shape>
 >;
+
+/**
+ * Resolves a single `dependsOn` entry to the node it becomes on the output.
+ * Inline `q.static(...)` / `q.infinite(...)` definitions are materialised under
+ * a derived key (so their `queryKey` is `[...dependent, name]`); plain values
+ * (already-materialised nodes such as `reference.countries`) pass through
+ * unchanged, preserving their canonical key.
+ */
+type ResolvedDependencyNode<Dependency, Key extends AnyMutableOrReadonlyArray> =
+  Dependency extends StaticQueryDefinition<infer Shape>
+    ? StaticOrDependentFactoryOutput<Key, Shape>
+    : Dependency extends InfiniteQueryDefinition<infer Shape>
+      ? InfiniteFactoryOutput<Key, Shape>
+      : Dependency;
+
+/**
+ * The resolved `dependsOn` map exposed on a dependent node, e.g.
+ * `session.me.dependsOn.countries.queryKey`. Each entry is the materialised
+ * dependency node, so inline dependencies remain invalidatable by key.
+ */
+type DependsOnOutput<
+  TDependsOn extends DependsOnMap,
+  BaseKey extends AnyMutableOrReadonlyArray,
+> = {
+  [K in keyof TDependsOn & string]: ResolvedDependencyNode<
+    TDependsOn[K],
+    readonly [...BaseKey, K]
+  >;
+};
+
+type DependsOnOutputFor<
+  Shape extends object,
+  ComposedKey extends AnyMutableOrReadonlyArray,
+> = Shape extends { dependsOn?: infer Dependencies }
+  ? Dependencies extends DependsOnMap
+    ? keyof Dependencies extends never
+      ? object
+      : { dependsOn: DependsOnOutput<Dependencies, ComposedKey> }
+    : object
+  : object;
+
+type DependentFactoryRecordOutput<
+  BaseKey extends AnyMutableOrReadonlyArray,
+  Shape extends object,
+  SchemaQueryKey extends
+    | AnyMutableOrReadonlyArray
+    | null
+    | undefined = NodeQueryKey<Shape>,
+  ComposedKey extends AnyMutableOrReadonlyArray = ComposeQueryKey<
+    BaseKey,
+    ExtractNullableKey<SchemaQueryKey>
+  >,
+  TQueryFnData = NodeQueryFn<Shape> extends AnyQueryFnLike
+    ? Awaited<ReturnType<NodeQueryFn<Shape>>>
+    : unknown,
+> = Prettify<
+  NodeRebindableOptions<Shape, readonly [...ComposedKey], TQueryFnData> & {
+    queryKey: readonly [...ComposedKey];
+  } & (NodeQueryFn<Shape> extends AnyQueryFnLike
+      ? QueryOptionsStruct<ComposedKey, NodeQueryFn<Shape>>
+      : object) &
+    DependsOnOutputFor<Shape, readonly [...ComposedKey]> &
+    NestedFactoryOutputs<ComposedKey, Shape>
+>;
+
+/**
+ * A `q.static(...)` node carrying a `dependsOn` map is routed through the
+ * dependent output transform (option overrides rebound to the authored
+ * `queryFn`'s data); everything else uses the standard static transform.
+ */
+type StaticOrDependentFactoryOutput<
+  Keys extends AnyMutableOrReadonlyArray,
+  Shape extends object,
+> = Shape extends { dependsOn: DependsOnMap }
+  ? DependentFactoryRecordOutput<Keys, Shape>
+  : StaticFactoryOutput<Keys, Shape>;
 
 /**
  * Detects whether a plain shape is an infinite-query shape via the presence of
@@ -378,7 +592,7 @@ type DynamicFactoryOutput<
   ...args: Parameters<Factory>
 ) => IsInfiniteShape<Shape> extends true
   ? InfiniteFactoryOutput<Keys, Shape & object>
-  : StaticFactoryOutput<Keys, Shape & object>) &
+  : StaticOrDependentFactoryOutput<Keys, Shape & object>) &
   DefinitionKey<Keys>;
 
 export type AnyDynamicQueryStoreUnit = DynamicFactoryOutput<
@@ -415,7 +629,7 @@ type QueryStoreUnitEntries<
     : Schema[P] extends InfiniteQueryDefinition<infer Shape>
       ? InfiniteFactoryOutput<[Key, P], Shape>
       : Schema[P] extends StaticQueryDefinition<infer Shape>
-        ? StaticFactoryOutput<[Key, P], Shape>
+        ? StaticOrDependentFactoryOutput<[Key, P], Shape>
         : never;
 };
 

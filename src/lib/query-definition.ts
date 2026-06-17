@@ -2,8 +2,11 @@ import { omitPrototype } from "../internals/omit-prototype";
 import type { AnyMutableOrReadonlyArray } from "../types/core";
 import type {
   AnyStaticOrInfiniteQueryDefinition,
+  DependentDefinitionShape,
+  DependsOnMap,
   DynamicFactory,
   DynamicQueryDefinition,
+  EmptyDependsOnMap,
   EmptyStaticDefinitionError,
   InfiniteDefinitionShape,
   InfiniteQueryDefinition,
@@ -35,14 +38,32 @@ const hasInfiniteMarker = (value: Record<string, unknown>): boolean =>
 export function staticQuery<
   TQueryFnData,
   TPageParam,
+  const TDependsOn extends DependsOnMap = EmptyDependsOnMap,
   const TQueryKey extends
     | AnyMutableOrReadonlyArray
     | null
     | undefined = undefined,
 >(
-  definition: InfiniteDefinitionShape<TQueryFnData, TPageParam, TQueryKey>
+  definition: InfiniteDefinitionShape<
+    TQueryFnData,
+    TPageParam,
+    TDependsOn,
+    TQueryKey
+  >
 ): InfiniteQueryDefinition<
-  InfiniteDefinitionShape<TQueryFnData, TPageParam, TQueryKey>
+  InfiniteDefinitionShape<TQueryFnData, TPageParam, TDependsOn, TQueryKey>
+>;
+export function staticQuery<
+  TQueryFnData,
+  const TDependsOn extends DependsOnMap,
+  const TQueryKey extends
+    | AnyMutableOrReadonlyArray
+    | null
+    | undefined = undefined,
+>(
+  definition: DependentDefinitionShape<TQueryFnData, TDependsOn, TQueryKey>
+): StaticQueryDefinition<
+  DependentDefinitionShape<TQueryFnData, TDependsOn, TQueryKey>
 >;
 export function staticQuery<const Shape extends StaticDefinitionShape>(
   definition: keyof Shape extends never
