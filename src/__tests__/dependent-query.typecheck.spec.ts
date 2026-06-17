@@ -114,19 +114,18 @@ test("dynamic dependents type their argument and their dependencies", () => {
   });
 
   const posts = q.createQueryKeys("posts", {
-    byAuthor: q.dynamic((userId: string) =>
-      q.static({
-        queryKey: [userId],
-        dependsOn: { author: users.detail(userId) },
-        queryFn: (_context, dependencies) => {
-          expectTypeOf(dependencies.author).toEqualTypeOf<{
-            id: string;
-            name: string;
-          }>();
-          return Promise.resolve({ author: dependencies.author.name });
-        },
-      })
-    ),
+    byAuthor: q.dynamic((userId: string) => ({
+      queryKey: [userId],
+      dependsOn: { author: users.detail(userId) },
+      staleTime: 60_000,
+      queryFn: (_context, dependencies) => {
+        expectTypeOf(dependencies.author).toEqualTypeOf<{
+          id: string;
+          name: string;
+        }>();
+        return Promise.resolve({ author: dependencies.author.name });
+      },
+    })),
   });
 
   const node = posts.byAuthor("user_1");
@@ -135,6 +134,44 @@ test("dynamic dependents type their argument and their dependencies", () => {
   >();
   expectTypeOf(node.dependsOn.author.queryKey).toEqualTypeOf<
     readonly ["users", "detail", string]
+  >();
+});
+
+test("dynamic infinite dependents infer pages and dependencies inline", () => {
+  const settings = q.createQueryKeys("settings", {
+    feed: q.static({ queryFn: () => Promise.resolve({ pageSize: 20 }) }),
+  });
+
+  const feeds = q.createQueryKeys("feeds", {
+    byTopic: q.dynamic((topic: string) => ({
+      queryKey: [topic],
+      dependsOn: { settings: settings.feed },
+      initialPageParam: 0,
+      queryFn: (context, dependencies) => {
+        expectTypeOf(dependencies.settings).toEqualTypeOf<{
+          pageSize: number;
+        }>();
+        return Promise.resolve({
+          items: [] as string[],
+          nextCursor: (context.pageParam as number) + 1,
+        });
+      },
+      getNextPageParam: (lastPage) => {
+        expectTypeOf(lastPage).toEqualTypeOf<{
+          items: string[];
+          nextCursor: number;
+        }>();
+        return lastPage.nextCursor;
+      },
+    })),
+  });
+
+  const node = feeds.byTopic("typescript");
+  expectTypeOf(node.queryKey).toEqualTypeOf<
+    readonly ["feeds", "byTopic", string]
+  >();
+  expectTypeOf(node.dependsOn.settings.queryKey).toEqualTypeOf<
+    readonly ["settings", "feed"]
   >();
 });
 

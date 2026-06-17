@@ -234,14 +234,12 @@ describe("dependsOn", () => {
     });
 
     const posts = q.createQueryKeys("posts", {
-      byAuthor: q.dynamic((userId: string) =>
-        q.static({
-          queryKey: [userId],
-          dependsOn: { author: users.detail(userId) },
-          queryFn: (_context, { author }) =>
-            Promise.resolve({ author: author.name, posts: [] as string[] }),
-        })
-      ),
+      byAuthor: q.dynamic((userId: string) => ({
+        queryKey: [userId],
+        dependsOn: { author: users.detail(userId) },
+        queryFn: (_context, { author }) =>
+          Promise.resolve({ author: author.name, posts: [] as string[] }),
+      })),
     });
 
     const client = new QueryClient();
