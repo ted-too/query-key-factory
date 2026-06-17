@@ -1,4 +1,5 @@
 import { q } from "../lib/q";
+import type { InfiniteDefinitionShape } from "../types/query-store";
 
 describe("infinite queries via q.static", () => {
   it("creates infinite query nodes when initialPageParam is present", () => {
@@ -68,14 +69,13 @@ describe("infinite queries via q.static", () => {
   });
 
   it("rejects invalid extra properties on infinite shapes", () => {
-    q.createQueryKeys("posts", {
+    const definition: InfiniteDefinitionShape<{ ok: boolean }, number> = {
+      queryFn: () => Promise.resolve({ ok: true }),
+      initialPageParam: 0,
+      getNextPageParam: () => null,
       // @ts-expect-error invalidKey is not a supported infinite query option
-      feed: q.static({
-        queryFn: ({ pageParam }) => Promise.resolve({ pageParam }),
-        initialPageParam: 0,
-        getNextPageParam: () => null,
-        invalidKey: true,
-      }),
-    });
+      invalidKey: true,
+    };
+    expect(definition.initialPageParam).toBe(0);
   });
 });

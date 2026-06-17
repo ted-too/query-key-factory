@@ -1,3 +1,4 @@
+import type { QueryFunction, QueryFunctionContext } from "@tanstack/query-core";
 import { assertSchemaKeys } from "../internals/assert-schema-keys";
 import { omitPrototype } from "../internals/omit-prototype";
 import type { AnyMutableOrReadonlyArray, DefinitionKey } from "../types/core";
@@ -15,8 +16,22 @@ import {
   isInfiniteQueryDefinition,
   isStaticQueryDefinition,
 } from "./query-definition";
+import {
+  ensureDependencyReactivity,
+  queryHashForKey,
+} from "./reactive-dependencies";
 
 type RuntimeNodeShape = Record<string, unknown>;
+
+interface DependencyQueryOptions {
+  queryFn: QueryFunction;
+  queryKey: AnyQueryKey;
+}
+
+type DependentUserQueryFn = (
+  context: QueryFunctionContext,
+  dependencies: Record<string, unknown>
+) => unknown;
 
 type TransformedSchemaMap<Schema extends QueryFactorySchema> = Map<
   keyof Schema,
@@ -91,13 +106,86 @@ export function createQueryKeys<
       nestedQueries == null
         ? undefined
         : createNestedEntries(nestedQueries, innerKey);
-    const { queryKey: _queryKey, ...restOptions } = options;
+    const { queryKey: _queryKey, dependsOn, queryFn, ...restOptions } = options;
+
+    const resolvedDependsOn =
+      dependsOn != null && typeof dependsOn === "object"
+        ? resolveDependsOnMap(innerKey, dependsOn as Record<string, unknown>)
+        : undefined;
+
+    const resolvedQueryFn =
+      resolvedDependsOn !== undefined && typeof queryFn === "function"
+        ? createDependentQueryFn(
+            resolvedDependsOn,
+            queryFn as DependentUserQueryFn
+          )
+        : queryFn;
 
     return omitPrototype({
       ...nestedEntries,
       ...restOptions,
+      ...(resolvedQueryFn === undefined ? {} : { queryFn: resolvedQueryFn }),
+      ...(resolvedDependsOn === undefined
+        ? {}
+        : { dependsOn: resolvedDependsOn }),
       queryKey: innerKey,
     });
+  };
+
+  const resolveDependencyOptions = (
+    dependencyKey: readonly [...AnyQueryKey, string],
+    dependencyValue: unknown
+  ): DependencyQueryOptions => {
+    if (
+      isStaticQueryDefinition(dependencyValue) ||
+      isInfiniteQueryDefinition(dependencyValue)
+    ) {
+      return createNodeResult(
+        dependencyKey,
+        dependencyValue.definition as RuntimeNodeShape
+      ) as unknown as DependencyQueryOptions;
+    }
+
+    return dependencyValue as DependencyQueryOptions;
+  };
+
+  const resolveDependsOnMap = (
+    nodeKey: readonly [...AnyQueryKey],
+    dependsOn: Record<string, unknown>
+  ): Record<string, DependencyQueryOptions> =>
+    omitPrototype(
+      Object.fromEntries(
+        Object.entries(dependsOn).map(([name, value]) => [
+          name,
+          resolveDependencyOptions([...nodeKey, name], value),
+        ])
+      )
+    );
+
+  const createDependentQueryFn = (
+    resolvedDependsOn: Record<string, DependencyQueryOptions>,
+    userQueryFn: DependentUserQueryFn
+  ) => {
+    const dependencyEntries = Object.entries(resolvedDependsOn);
+
+    return async (context: QueryFunctionContext) => {
+      const registry = ensureDependencyReactivity(context.client);
+      const dependentHash = queryHashForKey(context.client, context.queryKey);
+
+      const resolved = await Promise.all(
+        dependencyEntries.map(async ([name, dependencyOptions]) => {
+          const data = await context.client.ensureQueryData(dependencyOptions);
+          registry.link(
+            queryHashForKey(context.client, dependencyOptions.queryKey),
+            dependentHash,
+            context.queryKey
+          );
+          return [name, data] as const;
+        })
+      );
+
+      return userQueryFn(context, omitPrototype(Object.fromEntries(resolved)));
+    };
   };
 
   const createDynamicCallback = (
