@@ -215,3 +215,86 @@ test("plain-object dynamic dependent is useQuery-ready without phantom options",
     >
   >();
 });
+
+test("a dependent q.static node accepts and type-checks authored options", () => {
+  const reference = q.createQueryKeys("reference", {
+    config: q.static({
+      queryFn: () => Promise.resolve({ token: "t" }),
+    }),
+  });
+
+  const session = q.createQueryKeys("session", {
+    offers: q.static({
+      dependsOn: { config: reference.config },
+      enabled: false,
+      staleTime: 60_000,
+      queryFn: (_ctx, { config }) =>
+        Promise.resolve([{ id: 1, token: config.token }]),
+    }),
+  });
+
+  const node = session.offers;
+  expectTypeOf(node).toHaveProperty("enabled");
+  expectTypeOf(node).toHaveProperty("staleTime");
+  expectTypeOf<boolean>().toExtend<NonNullable<typeof node.enabled>>();
+
+  // Authoring an option must not regress useQuery-readiness.
+  expectTypeOf(node).toExtend<
+    UseQueryOptions<
+      { id: number; token: string }[],
+      Error,
+      { id: number; token: string }[],
+      readonly ["session", "offers"]
+    >
+  >();
+});
+
+test("a dependent q.dynamic node accepts and type-checks authored options", () => {
+  const reference = q.createQueryKeys("reference", {
+    config: q.static({
+      queryFn: () => Promise.resolve({ token: "t" }),
+    }),
+  });
+
+  const property = q.createQueryKeys("property", {
+    offers: q.dynamic((propertyId: string) => ({
+      queryKey: [propertyId],
+      dependsOn: { config: reference.config },
+      enabled: propertyId.length > 0,
+      gcTime: 600_000,
+      queryFn: (_ctx, { config }) =>
+        Promise.resolve([{ id: 1, token: config.token }]),
+    })),
+  });
+
+  const node = property.offers("property_1");
+  expectTypeOf(node).toHaveProperty("enabled");
+  expectTypeOf(node).toHaveProperty("gcTime");
+  expectTypeOf<boolean>().toExtend<NonNullable<typeof node.enabled>>();
+
+  expectTypeOf(node).toExtend<
+    UseQueryOptions<
+      { id: number; token: string }[],
+      Error,
+      { id: number; token: string }[],
+      readonly ["property", "offers", string]
+    >
+  >();
+});
+
+test("a mistyped option on a dependent node is rejected at the call site", () => {
+  const reference = q.createQueryKeys("reference", {
+    config: q.static({
+      queryFn: () => Promise.resolve({ token: "t" }),
+    }),
+  });
+
+  q.createQueryKeys("session", {
+    offers: q.static({
+      dependsOn: { config: reference.config },
+      // @ts-expect-error enabled must be a boolean / predicate, not a string
+      enabled: "nope",
+      queryFn: (_ctx, _deps) => Promise.resolve([{ id: 1 }]),
+    }),
+  });
+});

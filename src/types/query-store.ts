@@ -140,6 +140,18 @@ export type StaticDefinitionShape = Partial<ContextualQueryOptions> & {
 };
 
 /**
+ * The TanStack option fields a node may author alongside its `queryKey`,
+ * `queryFn`, and (for dependents) `dependsOn`. Intersected into the hint
+ * interfaces below so options like `enabled`, `staleTime`, and `gcTime` are
+ * suggested in editors and value-checked at the call site, without forcing them
+ * onto the materialised node (`const Shape` still captures only authored keys).
+ */
+export type AuthorableNodeOptions = Omit<
+  ContextualQueryOptions,
+  "queryKey" | "queryFn"
+>;
+
+/**
  * Contextual hints intersected with a `q.dynamic(...)` factory body (as
  * `Shape & DynamicFactoryBodyHints<...>`). This lets a single `dynamicQuery`
  * signature both capture the exact literal via `const Shape` (preserving
@@ -157,7 +169,7 @@ export interface DynamicFactoryBodyHints<
   TQueryFnData,
   TPageParam,
   TDependsOn extends DependsOnMap,
-> {
+> extends Partial<AuthorableNodeOptions> {
   dependsOn?: TDependsOn;
   getNextPageParam?: (
     lastPage: NoInfer<TQueryFnData>,
@@ -268,7 +280,7 @@ export type DependentDefinitionShape<
 export interface DependentDefinitionHints<
   TQueryFnData,
   TDependsOn extends DependsOnMap,
-> {
+> extends Partial<AuthorableNodeOptions> {
   dependsOn: TDependsOn;
   queryFn: (
     context: QueryFunctionContext<AnyMutableOrReadonlyArray>,
